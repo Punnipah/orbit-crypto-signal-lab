@@ -1,4 +1,4 @@
-# Orbit Crypto Signal Lab v2.1 — Windows + มือถือผ่านเว็บ
+# Orbit Crypto Signal Lab v2.2 — Windows + มือถือผ่านเว็บ
 
 โปรแกรมวิเคราะห์สัญญาณคริปโตแบบอ่านข้อมูลอย่างเดียว ใช้เครื่องมือฟรี ไม่เชื่อมบัญชีซื้อขาย ไม่มี API Key หรือคำสั่งส่งออเดอร์
 
@@ -38,7 +38,10 @@ py -m venv .venv
 | Backtest แบบ Long-only Spot พร้อมค่าธรรมเนียม/Slippage | ได้ — **เฉพาะกลยุทธ์เทคนิค** |
 | Walk-forward ปรับเกณฑ์คะแนนบน Train แล้วทดสอบช่วงถัดไป | ได้ — **เฉพาะกลยุทธ์เทคนิค** |
 | CoinGlass Funding/OI/Long-Short/Liquidations | กรอกเองใน Dashboard |
-| Final BUY/SELL/WAIT เมื่อข้อมูล CoinGlass สดและผ่านกฎ | ได้ |
+| Auto Futures Funding/OI/Long-Short | ดึงจาก Binance USDⓈ-M Futures (สำรอง Bybit USDT Linear Futures) แบบอ่านอย่างเดียว ไม่ใช้ API Key |
+| Auto BUY/SELL/WAIT | กรองเพิ่มจากข้อมูล Futures ที่ใหม่และครบ; เป็นเกณฑ์ทดลอง ยังไม่มีผล Backtest ของตัวกรองนี้ |
+| CoinGlass แบบเสริม | หากไม่กรอก ใช้ผล Auto; หากกรอกแล้วไม่ผ่าน/เก่า/ผิดเหรียญ เปลี่ยนเป็น WAIT |
+| Final BUY/SELL/WAIT | ได้เมื่อเทคนิคและ Auto Futures ผ่าน และข้อมูลเสริม CoinGlass (ถ้ามี) ไม่คัดค้าน |
 | Auto Telegram / Auto Trading | ไม่มี |
 
 ## แหล่งข้อมูลและความถูกต้อง
@@ -63,14 +66,26 @@ Backtest จำลองการซื้อเมื่อสัญญาณ B
 - Walk-forward เลือกเกณฑ์คะแนน 5/6/7 จากช่วงฝึก แล้วทดสอบช่วงถัดไปโดยไม่ใช้ผลทดสอบมาปรับเกณฑ์ย้อนหลัง
 - เมื่อจำนวนดีลน้อย ผลจะถูกระบุว่า "หลักฐานไม่เพียงพอ"; ตัวเลขในอดีตไม่รับประกันอนาคต
 
-**ข้อจำกัด:** Backtest/Walk-forward ของ v2.0 ยังคงไม่รวม CoinGlass เพราะยังไม่มีชุดข้อมูล CoinGlass ย้อนหลังที่ได้รับสิทธิ์มาอย่างถูกต้อง จึงห้ามอ้างว่าผลของ Full Signal ที่รวม CoinGlass ผ่าน Backtest แล้ว
+**ข้อจำกัด:** Backtest/Walk-forward ของ v2.2 ยังคงทดสอบ **เฉพาะเทคนิค Spot** ไม่รวมข้อมูล Futures หรือ CoinGlass เพราะยังไม่ได้มีชุดข้อมูลอนุพันธ์ย้อนหลังที่รวมกฎเดียวกันในการทดสอบ และไม่มีชุดข้อมูล CoinGlass ย้อนหลังที่ได้รับสิทธิ์มาอย่างถูกต้อง จึงห้ามอ้างว่าผลของ Full Signal ผ่าน Backtest แล้ว
+
+## Futures อัตโนมัติฟรี (v2.2)
+
+1. เลือกคู่เหรียญที่ลงท้ายด้วย `USDT` (เช่น BTCUSDT) และมีตลาด Futures ในแหล่งที่ใช้
+2. แอปเรียก Public REST ของ Binance USDⓈ-M (`premiumIndex`, `openInterestHist`, `globalLongShortAccountRatio`) โดยไม่ต้องมีบัญชี
+3. ถ้า Binance Futures ไม่พร้อม (เช่น HTTP 451) แอปจะลอง Bybit Public REST (`tickers`, `open-interest`, `account-ratio`) โดยใช้ **ข้อมูลครบจาก Bybit เท่านั้น** ไม่ผสมข้ามตลาด
+4. Funding เป็นอัตราเปอร์เซ็นต์ของ Futures ที่รายงาน; OI Change 24h ของ Binance ใช้มูลค่า OI (USDT), ของ Bybit ใช้ปริมาณสัญญา (base units) ไม่ควรเทียบการเปลี่ยนแปลงข้ามแหล่งแบบตรง ๆ
+5. ต้องมีข้อมูล OI ย้อนหลังอย่างน้อย 24 ชั่วโมง, Funding และสัดส่วน Long/Short ใหม่ตามเกณฑ์ ก่อน Auto Signal ไม่เป็น WAIT
+6. หากแหล่งข้อมูลทั้งคู่ถูกจำกัด (เช่น 451/403) จะ **WAIT พร้อมเหตุผล** ไม่บังคับเลี่ยงข้อจำกัดหรือสมมติข้อมูล
+7. ไม่มี Liquidation Aggregates 24h จาก Public API ชุดนี้ จึงไม่ใช้ค่านี้ใน Auto Signal และยังคง CoinGlass เป็นตัวกรองกรอกเอง
+
+**ข้อเท็จจริงจากการทดสอบสดในสภาพแวดล้อมพัฒนา:** Binance Futures ตอบ HTTP 451, Bybit ส่งหน้า `Site Unavailable` และ OKX HTTP 403; จึงยังไม่สามารถยืนยันการดึงข้อมูล Futures จริงสำเร็จในสภาพแวดล้อมนี้ได้ แม้ชุดทดสอบจำลองผ่านครบ แอปบน Streamlit Cloud อาจเข้าถึงได้ต่างกัน หากไม่สำเร็จต้องอ่าน error และถือเป็น WAIT
 
 ## CoinGlass แบบฟรี — ไม่มีบัญชี/API Key
 
 1. เปิด https://www.coinglass.com/ และดูข้อมูลที่เข้าถึงได้ตามปกติ
 2. คัดลอก Funding Rate, OI Change 24h, Long/Short Accounts Ratio และ Liquidations ของ Long/Short ช่วง 24h ที่อยู่ในหน่วยเดียวกัน
 3. กรอกค่าพร้อมวันและเวลาไทยในหัวข้อ CoinGlass ของแดชบอร์ด และยืนยันความถูกต้อง
-4. Final Signal จะเป็น BUY/SELL ได้ต่อเมื่อสัญญาณเทคนิคและข้อมูล CoinGlass ที่ใหม่พอสอดคล้องกัน มิฉะนั้น WAIT
+4. CoinGlass เป็นตัวกรองเสริมใน v2.2: ไม่กรอกยังดู Auto Signal ได้ หากกรอกแล้วข้อมูลขัดแย้ง/หมดอายุ/ผิดเหรียญ Final Signal จะ WAIT
 
 CoinGlass API ทางการต้องใช้ API Key และแผนที่แสดงบนหน้าราคา ณ ตุลาคม 2026 เริ่ม $29/เดือน โปรแกรมฟรีนี้จึง **ไม่เชื่อม CoinGlass API อัตโนมัติ** และไม่ทำการสแครปเว็บเพื่อข้ามระบบสิทธิ์ หากข้อมูลหน้าเว็บบางอย่างไม่สามารถเข้าถึงได้ฟรี ก็ไม่สามารถยืนยัน Final Signal ได้
 
@@ -87,5 +102,8 @@ CoinGlass API ทางการต้องใช้ API Key และแผน
 - Streamlit install: https://docs.streamlit.io/get-started/installation/command-line
 - CoinGlass API authentication: https://docs.coinglass.com/reference/authentication
 - CoinGlass pricing: https://www.coinglass.com/pricing
+- Bybit public market tickers: https://bybit-exchange.github.io/docs/v5/market/tickers
+- Bybit public OI: https://bybit-exchange.github.io/docs/v5/market/open-interest
+- Bybit public Long/Short: https://bybit-exchange.github.io/docs/v5/market/long-short-ratio
 
 โปรแกรมนี้เป็นเครื่องมือวิจัย/สนับสนุนการตัดสินใจ ไม่ใช่คำแนะนำการลงทุนเฉพาะบุคคล

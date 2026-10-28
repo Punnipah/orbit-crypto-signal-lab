@@ -14,6 +14,7 @@ from backtest_engine import BacktestConfig, simulate, walk_forward
 from binance_data import (HIGHER_TIMEFRAME, POPULAR_QUOTES, PublicDataError,
                           TIMEFRAMES, count_time_gaps, fetch_catalog, fetch_klines, search_catalog)
 from coinglass_overlay import CoinGlassSnapshot, confirm_signal
+from public_derivatives import DerivativesDataError, evaluate_derivatives, fetch_with_fallback
 from research_engine import latest_reasons, prepare_features, with_signal
 
 
@@ -32,6 +33,11 @@ def get_catalog():
 @st.cache_data(ttl=180, show_spinner=False)
 def get_candles(symbol: str, tf: str, n: int):
     return fetch_klines(symbol, tf, n)
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def get_derivatives(symbol: str):
+    return fetch_with_fallback(symbol)
 
 
 def plot_prices(f: pd.DataFrame, symbol: str, timeframe: str):
@@ -120,7 +126,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🪐 Orbit Crypto Signal Lab")
-st.caption("Professional-style research prototype · ข้อมูลราคาสาธารณะ · ไม่ส่งออเดอร์ · ไม่มี API Key")
+st.caption("v2.2 · Binance Spot + Binance/Bybit Futures public · CoinGlass เสริม · ไม่ส่งออเดอร์ · ไม่มี API Key")
 st.info("📱 มือถือ: แตะเมนู **>** มุมซ้ายบนเพื่อค้นหาเหรียญ/ตั้งค่าความเสี่ยง แล้วปิดเมนูเพื่อดูกราฟ · ข้อมูล CoinGlass ที่กรอกจะอยู่เฉพาะในเซสชันนี้")
 
 with st.sidebar:
@@ -158,6 +164,7 @@ with st.sidebar:
     if st.button("🔄 ดึงข้อมูลใหม่", width="stretch"):
         get_catalog.clear()
         get_candles.clear()
+        get_derivatives.clear()
         st.rerun()
 
 htf = HIGHER_TIMEFRAME[timeframe]
@@ -188,18 +195,47 @@ if price_stale:
 
 tabs = st.tabs(["📊 สัญญาณ", "🧪 Backtest", "🔁 Walk-forward", "📖 คู่มือ"])
 with tabs[0]:
-    snapshot = coin_glass_panel(selected["base"])
     bars_day = max(1, 1440 // TIMEFRAMES[timeframe])
     price_change24 = (base["close"].iloc[-1] / base["close"].iloc[-1 - bars_day] - 1) * 100
     max_age = {"15m": 1, "1h": 2, "4h": 4, "1d": 24}[timeframe]
     raw = str(analyzed["signal"].iloc[-1])
+    st.subheader("ข้อมูลอนุพันธ์อัตโนมัติ — Binance / Bybit Futures")
+    st.caption("คู่ USDT · ลอง Binance ก่อน ถ้าใช้ไม่ได้จึงลอง Bybit · ข้อมูลตลาดเดียวต่อครั้ง ไม่ใช่ CoinGlass · กราฟ Spot มาจาก Binance")
+    derivatives = None
+    derivatives_error = None
+    try:
+        derivatives = get_derivatives(symbol)
+    except (DerivativesDataError, ValueError, KeyError, TypeError) as exc:
+        derivatives_error = str(exc)
+    auto = evaluate_derivatives(raw, derivatives, float(price_change24))
+    if derivatives is None:
+        st.warning(f"ข้อมูล Futures ไม่พร้อม: {derivatives_error or 'ไม่มีข้อมูล'} — Auto Signal = WAIT")
+    else:
+        f_cols = st.columns(2)
+        f_cols[0].metric("Funding ล่าสุด (%)", f"{derivatives.funding_rate_pct:+.4f}%")
+        f_cols[1].metric("OI เปลี่ยน 24 ชม.", f"{derivatives.oi_change_24h_pct:+.2f}%")
+        f_cols[0].metric("Long/Short Accounts", f"{derivatives.long_short_account_ratio:.3f}")
+        f_cols[1].metric("OI มูลค่า (USDT)", f"{derivatives.oi_notional_usdt:,.0f}")
+        st.caption(f"ที่มา: {derivatives.source} · Funding {derivatives.funding_at.astimezone(BKK):%d/%m %H:%M} · OI {derivatives.oi_at.astimezone(BKK):%d/%m %H:%M} · L/S {derivatives.ratio_at.astimezone(BKK):%d/%m %H:%M} (เวลาไทย)")
+        st.info("OI Change 24h ของ Binance คำนวณจากมูลค่า OI; ของ Bybit คำนวณจากปริมาณสัญญา จึงเทียบค่าข้ามแหล่งตรง ๆ ไม่ได้ · Liquidations รวมหลายตลาดไม่มีใน Public API ชุดนี้")
+    st.caption(f"Auto Signal (ทดลอง): **{auto['signal']}** · {auto['status']} · ยังไม่ได้ Backtest กฎ Futures ร่วมกับกลยุทธ์")
+    for reason in auto["reasons"]:
+        st.write("• " + reason)
+    st.divider()
+    st.markdown(f"**CoinGlass เป็นตัวกรองเสริม (เลือกใช้ได้)** · [เปิด CoinGlass สำหรับ {selected['base']}](https://www.coinglass.com/currencies/{selected['base']}/futures)")
+    snapshot = coin_glass_panel(selected["base"])
     cg = confirm_signal(raw, snapshot, selected["base"], float(price_change24),
                         now=datetime.now(timezone.utc), max_age_hours=max_age)
-    final_signal = "WAIT" if price_stale else cg["signal"]
+    final_signal = auto["signal"]
+    if snapshot is not None and cg["signal"] != raw:
+        final_signal = "WAIT"  # An explicitly entered CoinGlass caution/invalid result vetoes.
+    if price_stale:
+        final_signal = "WAIT"
     colors = {"BUY": "🟢", "SELL": "🔴", "WAIT": "🟡"}
     st.subheader(f"{colors[final_signal]} Final Signal: {final_signal}")
-    if raw != final_signal or price_stale:
-        st.info(f"สัญญาณกราฟ: {raw} | CoinGlass: {cg['status']} | ราคาเก่า: {'ใช่' if price_stale else 'ไม่ใช่'} — ยังไม่ยืนยันผล BUY/SELL")
+    st.caption(f"Technical: {raw} · Binance Futures: {auto['status']} · CoinGlass: {cg['status'] if snapshot else 'ไม่ได้กรอก (เสริม)'}")
+    if final_signal != "WAIT":
+        st.warning("สัญญาณนี้อาศัย Spot + Futures จากแหล่งที่ระบุ หากไม่มี CoinGlass จะยังไม่ใช่สัญญาณที่ CoinGlass ยืนยัน และยังไม่มีสถิติทดสอบกฎอนุพันธ์ร่วม")
     # Two metrics per row are legible on narrow mobile viewports.
     last = analyzed.iloc[-1]
     metrics = [("ราคาปิด", money(float(last["close"]))),
@@ -220,7 +256,7 @@ with tabs[0]:
         st.subheader("CoinGlass")
         for line in cg["reasons"]:
             st.write("• " + line)
-        st.caption("เกณฑ์ CoinGlass เป็นกฎเบื้องต้นที่ยังไม่ได้ Backtest จึงไม่เท่ากับความน่าจะเป็นที่จะทำกำไร")
+        st.caption("CoinGlass เป็นตัวกรองเสริม: เมื่อกรอกแล้วไม่ผ่านหรือข้อมูลไม่ถูกต้องจะเปลี่ยนผลเป็น WAIT; หากไม่กรอกจะใช้ผลจาก Futures สาธารณะเท่านั้น")
     with right:
         st.subheader("Market Structure & Risk")
         st.write("Pivot High:", money(float(last["pivot_high"])) if pd.notna(last["pivot_high"]) else "ไม่พร้อม")
@@ -234,11 +270,11 @@ with tabs[0]:
             st.success(f"ราคาอ้างอิง {money(entry)} · SL {money(stop)} · TP(2R) {money(entry + 2 * distance)}")
             st.write(f"ขนาดสถานะเชิงตัวอย่าง: {planned_qty:.6f} {selected['base']} (ก่อนค่าธรรมเนียม)")
         else:
-            st.info("แสดงแผนเข้าซื้อเมื่อ BUY ผ่าน CoinGlass เท่านั้น · SELL สำหรับ Spot คือขาย/ลดเหรียญที่ถือ")
+            st.info("แสดงแผนเข้าซื้อเมื่อ BUY ผ่านตัวกรองที่เปิดใช้อยู่เท่านั้น · SELL สำหรับ Spot คือขาย/ลดเหรียญที่ถือ")
     st.warning("โปรแกรมนี้ไม่ส่งคำสั่งซื้อขาย และไม่รับประกันกำไร ราคาในกระดานที่ผู้ใช้เทรดจริงอาจต่างจากแหล่งข้อมูล")
 
 with tabs[1]:
-    st.subheader("Technical Strategy Backtest — ไม่รวม CoinGlass")
+    st.subheader("Technical Strategy Backtest — ไม่รวม Futures และ CoinGlass")
     st.caption("จำลอง Spot ฝั่ง Long เท่านั้น · สัญญาณหลังแท่งปิด / เข้าแท่งถัดไป · Stop สำคัญกว่า Target ในแท่งเดียวกัน · รวมค่าธรรมเนียมและ Slippage")
     if gaps:
         st.error("ข้อมูลมีช่องว่าง จึงไม่สามารถรับรองคุณภาพการจำลองได้")
@@ -267,7 +303,7 @@ with tabs[1]:
             st.info("ยังไม่มีดีลที่เข้าเงื่อนไขในช่วงข้อมูลนี้")
 
 with tabs[2]:
-    st.subheader("Rolling Walk-forward — ไม่รวม CoinGlass")
+    st.subheader("Rolling Walk-forward — ไม่รวม Futures และ CoinGlass")
     st.write("แต่ละรอบเลือกเกณฑ์คะแนนจากข้อมูลฝึกเท่านั้น จากนั้นทดสอบบนช่วงเวลาถัดไปซึ่งไม่ได้ใช้ปรับเกณฑ์")
     if gaps:
         st.error("ไม่รัน Walk-forward เพราะประวัติราคามีช่องว่าง")
@@ -287,13 +323,15 @@ with tabs[3]:
     ### วิธีใช้
     1. เลือกสกุลราคา แล้วพิมพ์รหัสเหรียญ (เช่น `BTC` หรือ `XRP`) ในแถบซ้าย
     2. เลือกคู่เหรียญและ Timeframe จากนั้นรอสักครู่ให้ระบบคำนวณข้อมูลราคา
-    3. อ่าน **Technical Signal** ก่อน กรอก CoinGlass เพื่อยืนยัน **Final Signal**
+    3. อ่าน **Technical Signal** จาก Spot, **Auto Signal** จาก Binance Futures และ **Final Signal** ที่รวมตัวกรองเสริม
     4. เปิดแท็บ **Backtest** และ **Walk-forward** เพื่อตรวจสถิติย้อนหลัง (เฉพาะกลยุทธ์เทคนิค)
-    5. ถ้าไม่มี CoinGlass หรือข้อมูลหมดอายุ Final Signal จะเป็น `WAIT` เสมอ
+    5. CoinGlass เป็นข้อมูลเสริมแบบกรอกเอง; ถ้าไม่กรอกจะใช้ผล Futures แต่หากกรอกแล้วมีข้อเตือน/หมดอายุ จะเป็น `WAIT`
 
     ### ข้อจำกัดสำคัญ
     - CoinGlass API ทางการเป็นบริการที่ใช้ API Key และแพ็กเกจชำระเงิน ณ วันที่ตรวจสอบ ดังนั้นโหมดฟรีต้องกรอกค่าด้วยมือ
-    - ผล Backtest/Walk-forward **ไม่ได้รวม CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวม CoinGlass แล้ว
+    - ผล Backtest/Walk-forward **ไม่ได้รวม Binance Futures หรือ CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวมแล้ว
+    - ข้อมูลอนุพันธ์มาจาก Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะคู่ USDT ที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
+    - ไม่ได้รับข้อมูล Liquidations 24h ครบจาก Public API ที่ใช้ จึงไม่ใช้ใน Auto Signal
     - ข้อมูลจาก Binance Spot อาจไม่ตรงกับตลาดที่ผู้ใช้ซื้อขายจริง รวมถึงอาจถูกจำกัดการเข้าถึงบางเครือข่าย/ภูมิภาค
     - ไม่มีการส่งออเดอร์, ไม่มีการใช้ Leverage, ไม่มีการเปิด Short และไม่มีแจ้งเตือน Push ในรุ่นนี้
     - Market Structure เป็น Pivot/BOS/Sweep ตามกฎ ไม่ได้ครอบคลุมข่าว, On-chain, Order Book History หรือระบบสถาบันทั้งหมด
