@@ -1,6 +1,18 @@
-# Orbit Crypto Signal Lab v2.6.1 — Single MTF Signal (Windows + มือถือ)
+# Orbit Crypto Signal Lab v2.7 — Market Footprint + Single MTF (Windows + มือถือ)
 
 โปรแกรมวิเคราะห์สัญญาณคริปโตแบบอ่านข้อมูลอย่างเดียว ใช้เครื่องมือฟรี ไม่เชื่อมบัญชีซื้อขาย ไม่มี API Key หรือคำสั่งส่งออเดอร์
+
+## ใหม่ใน v2.7 — ตรวจแรงซื้อเชิงรุกและสภาพคล่องก่อน READY
+
+- **Binance Spot Order Book ฟรี**: Best Bid/Ask, Spread (bps), ปริมาณคำสั่งใกล้ราคาในระยะ ±0.5%, ความไม่สมดุล Bid/Ask และประมาณ Price Impact ของขนาดดีลที่ตั้งไว้ จาก `/ticker/bookTicker` และ `/depth`
+- **Anonymous Trade Flow ฟรี**: อ่าน 500 Binance Aggregate Trades ล่าสุดจาก `/aggTrades` แยกผู้ซื้อเชิงรุก/ผู้ขายเชิงรุกตามฟิลด์ buyer-is-maker; เช็กอายุเวลาของรายการเทรดและสัดส่วนแรงซื้อเชิงรุก
+- **Taker Buy Volume จากแท่งปิด**: ดึงฟิลด์ที่ Binance ระบุไว้ใน Kline แล้วประเมินอัตราส่วน Buy Volume 20 แท่งย้อนหลังของ 15m และ 1h (ต้อง ≥52% ตามเกณฑ์ทดลอง) ไม่สมมติข้อมูลเมื่อแหล่งไม่ส่งฟิลด์นี้
+- **BTC Market Regime**: ตรวจ BTCUSDT 4h และ 1d จาก Binance Spot แม้กำลังวิเคราะห์เหรียญอื่น เพื่อระวังตลาดหลักเป็นขาลง; ข้อมูลไม่พร้อมหรือเป็นลบจะไม่ให้ผลรวม READY
+- **Strict Evidence Gate**: ทุกชั้นใหม่เป็น veto อย่างเดียว ไม่เพิ่มความแม่นยำที่ไม่มีหลักฐาน; เมื่อข้อมูลสภาพคล่อง/Trade Flow/BTC ไม่พร้อมจะเป็น MTF WAIT พร้อมเหตุผล
+- **📈 MTF Research แบบทดลอง**: ปุ่มรัน Historical Spot-only MTF + Rolling Walk-forward บนแท่งที่ปิดแล้ว ทดสอบช่วง Train/Test แยกกัน และจำลองเข้าที่ราคาเปิดแท่ง 1h ถัดไปเฉพาะเมื่อยังอยู่ในโซน; รวมต้นทุนจำลอง แต่ **ยังไม่รวม Order Book, aggTrades, BTC Regime, Futures และ CoinGlass ย้อนหลัง** จึงไม่ใช่ Backtest ของ Final v2.7
+- **Paper Journal**: ปุ่มบันทึกสถานะ MTF/ราคา/โซน/แหล่งข้อมูลไว้ตรวจภายหลัง แล้วดาวน์โหลด CSV (ข้อมูลอยู่ในเซสชันเว็บ ต้องดาวน์โหลดเองก่อนปิด)
+
+**ห้ามตีความว่าโปรแกรมระบุตัวตนเจ้ามือได้**: Book Orders เปลี่ยน/ยกเลิกได้, Trade Flow ไม่แสดงเจ้าของ และข้อมูลจากตลาดหนึ่งไม่ได้แทนตลาดทั้งหมด. เงื่อนไข Spread ≤30 bps, Book Depth ≥5 เท่าของมูลค่าดีล, Estimated Impact ≤25 bps, Aggressive Buy ≥52%, Taker Buy 20 แท่ง ≥52% เป็น heuristic ยังไม่ผ่านการปรับเทียบกับผลจริง; ไม่รับประกันกำไร
 
 ## มีอะไรใหม่ใน v2.6.1 — เลือกเหรียญเดียว ได้ผลวิเคราะห์ MTF ชุดเดียว
 
@@ -62,13 +74,18 @@ py -m venv .venv
 
 ## สิ่งที่ทำได้จริง
 
-| รายการ | สถานะ v2.6.1 |
+| รายการ | สถานะ v2.7 |
 |---|---|
 | ค้นหาคู่เหรียญ Spot ที่อยู่ใน Binance Public Catalog | ได้ (รหัสเหรียญ / ชื่อสามัญบางเหรียญ) |
 | ดึงข้อมูลราคาแบบไม่ต้องมีบัญชีหรือ API Key | ได้ผ่าน Binance public market-data-only API |
 | วิเคราะห์ EMA20/50/200, RSI14, MACD, ADX, ATR, Volume Breakout | ได้ |
 | วิเคราะห์หลาย Timeframe | 15m→1h, 1h→4h, 4h→1d, 1d ไม่มีการยืนยันซ้ำ |
 | **Single MTF Signal (15m+1h+4h+1d)** | **มี** — วิเคราะห์ทั้ง 4 กรอบแต่แสดง BUY/WAIT + Entry/SL/TP รวมชุดเดียว; เกณฑ์ถ่วงน้ำหนักและยืนยันเป็น heuristic ยังไม่ Backtest |
+| **Spot Order Book + Best Bid/Ask + Estimated Impact** | **มี** — Binance Public API ฟรี; แสดง WAIT เมื่อไม่พร้อม/ข้อมูลเก่า/สภาพคล่องไม่เพียงพอ |
+| **Aggressive Trade Flow + Taker Buy Volume** | **มี** — Aggregate Trades ล่าสุดและ Taker Buy จากแท่งที่ปิดแล้ว; เป็น proxy ของแรงซื้อไม่ใช่ข้อมูลเจ้ามือ |
+| **BTC Market Regime 4h+1d** | **มี** — ดึง BTCUSDT Spot เป็น risk veto เพิ่มเมื่อวิเคราะห์ Altcoin |
+| **MTF Spot-only Walk-forward Research** | **มีแบบจำกัด** — กฎส่วนย่อยที่มีข้อมูลย้อนหลัง ไม่รวมอนุพันธ์/Order Book/CoinGlass จึงยังไม่พิสูจน์ Full Signal |
+| **บันทึก Signal Journal CSV** | **มี** — ผู้ใช้กดบันทึกเองในเซสชันเพื่อทำ Forward Paper Audit |
 | Confirmed Pivots, BOS, CHoCH, Liquidity Sweep | ได้ (เป็นกฎเชิงปริมาณเบื้องต้น) |
 | แผน Entry Zone / SL / TP1 / TP2 | คำนวณจากแท่งเทียนที่ปิดแล้วสำหรับคู่ที่ค้นหาได้; ถ้าข้อมูลหรือโครงสร้างไม่ดีจะแสดง NO SETUP ไม่ฝืนให้จุดซื้อ |
 | ขนาดสถานะและความเสี่ยงเชิงตัวอย่าง | ใช้ราคาขอบบน Entry Zone เผื่อ fee/slippage สองด้านและเพดานเงินต่อดีล; ไม่ใช่คำแนะนำขนาดเงินจริง |
@@ -103,7 +120,7 @@ Backtest จำลองการซื้อเมื่อสัญญาณ B
 - Walk-forward เลือกเกณฑ์คะแนน 5/6/7 จากช่วงฝึก แล้วทดสอบช่วงถัดไปโดยไม่ใช้ผลทดสอบมาปรับเกณฑ์ย้อนหลัง
 - เมื่อจำนวนดีลน้อย ผลจะถูกระบุว่า "หลักฐานไม่เพียงพอ"; ตัวเลขในอดีตไม่รับประกันอนาคต
 
-**ข้อจำกัด:** Backtest/Walk-forward ของ v2.6.1 ยังคงทดสอบ **เฉพาะเทคนิค Spot แบบเดิม** ไม่รวมสูตร Single MTF, Entry Zone/SL/TP1–TP2 ใหม่, Futures หรือ CoinGlass เพราะยังไม่มีชุดข้อมูลอนุพันธ์ย้อนหลังและกฎจำลองคำสั่งของแผนใหม่นี้ จึงห้ามอ้างว่าผลของ Full Signal หรือ Entry Zone ผ่าน Backtest แล้ว
+**ข้อจำกัด:** Backtest/Walk-forward เดิมยังทดสอบ **เฉพาะเทคนิค Spot** ส่วนแท็บ MTF Research ของ v2.7 ทดสอบเพียง MTF + Taker Buy + แผน Entry 1h จากแท่งปิดและจำลองราคาเปิดแท่งถัดไป **ไม่รวม Order Book/Aggressor Trades/BTC Regime/Futures/CoinGlass ในอดีต** จึงห้ามอ้างว่าผลของ Full Signal v2.7 ผ่าน Backtest แล้ว
 
 ## แผนเข้าซื้ออัตโนมัติ — v2.5
 

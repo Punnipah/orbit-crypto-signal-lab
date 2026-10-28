@@ -5,6 +5,7 @@ from datetime import timedelta
 import unittest
 
 from confluence import combine_timeframes
+from multi_timeframe import RuleCheck
 from test_multi_timeframe import NOW, cg, evaluate, future
 
 
@@ -77,6 +78,15 @@ class TestConfluence(unittest.TestCase):
         verdict = combine_timeframes(data)
         self.assertLess(verdict.alignment_index, 70.)
         self.assertEqual(verdict.signal, "WAIT")
+
+    def test_external_microstructure_veto_cannot_be_overridden_by_high_mtf_score(self):
+        data = reports()
+        self.assertEqual(combine_timeframes(data).status, "READY")
+        checks = (RuleCheck("Spot Liquidity", False, "Book missing"),)
+        verdict = combine_timeframes(data, additional_checks=checks)
+        self.assertEqual(verdict.signal, "WAIT")
+        self.assertEqual(verdict.status, "WAIT_SIGNAL")
+        self.assertIn("Spot Liquidity", " ".join(verdict.reasons))
 
 
 if __name__ == "__main__":

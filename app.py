@@ -11,6 +11,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from backtest_engine import BacktestConfig, simulate, walk_forward
+from btc_market import btc_context_checks, btc_regime
 from binance_data import (HIGHER_TIMEFRAME, POPULAR_QUOTES, PublicDataError,
                           TIMEFRAMES, count_time_gaps, fetch_catalog, fetch_klines,
                           fetch_spot_last_price, search_catalog)
@@ -18,7 +19,9 @@ from coinglass_overlay import CoinGlassSnapshot, confirm_signal, parse_quick_pas
 from confluence import combine_timeframes
 from display_format import format_price, format_signed_price
 from entry_planner import EntryPlan, plan_entry
-from multi_timeframe import build_timeframe_report
+from market_microstructure import fetch_microstructure, microstructure_checks
+from mtf_research import historical_mtf_features, mtf_walk_forward, run_mtf_backtest
+from multi_timeframe import RuleCheck, build_timeframe_report
 from public_derivatives import DerivativesDataError, evaluate_derivatives, fetch_with_fallback
 from research_engine import latest_reasons, prepare_features, with_signal
 
@@ -44,6 +47,11 @@ def get_spot_quote(symbol: str):
 @st.cache_data(ttl=180, show_spinner=False)
 def get_derivatives(symbol: str):
     return fetch_with_fallback(symbol)
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def get_microstructure(symbol: str, notional: float):
+    return fetch_microstructure(symbol, notional)
 
 
 def plot_prices(f: pd.DataFrame, symbol: str, timeframe: str, plan: EntryPlan | None = None):
@@ -150,7 +158,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🪐 Orbit Crypto Signal Lab")
-st.caption("v2.6.1 · Single Multi-Timeframe Signal · Spot + Futures ฟรี · CoinGlass เสริม · ไม่ส่งออเดอร์")
+st.caption("v2.7 · MTF + Order Flow + Order Book + BTC Regime · Public Spot/Futures ฟรี · CoinGlass เสริม · ไม่ส่งออเดอร์")
 st.info("📱 มือถือ: แตะเมนู **>** มุมซ้ายบนเพื่อค้นหาเหรียญ/ตั้งค่าความเสี่ยง แล้วปิดเมนูเพื่อดูกราฟ · ข้อมูล CoinGlass ที่กรอกจะอยู่เฉพาะในเซสชันนี้")
 
 with st.sidebar:
@@ -191,6 +199,7 @@ with st.sidebar:
         get_candles.clear()
         get_spot_quote.clear()
         get_derivatives.clear()
+        get_microstructure.clear()
         st.rerun()
 
 htf = HIGHER_TIMEFRAME[timeframe]
@@ -219,7 +228,7 @@ else:
 if price_stale:
     st.warning("ราคาล่าสุดอาจเก่าเกินไป: ระบบจะไม่ยืนยันสัญญาณสดจนกว่าข้อมูลจะอัปเดต")
 
-tabs = st.tabs(["🎯 สัญญาณ MTF รวม", "📊 สัญญาณละเอียด", "🧪 Backtest", "🔁 Walk-forward", "📖 คู่มือ"])
+tabs = st.tabs(["🎯 สัญญาณ MTF รวม", "📊 สัญญาณละเอียด", "🧪 Backtest", "🔁 Walk-forward", "📈 MTF Research", "📖 คู่มือ"])
 def render_multi_timeframe_dashboard():
     st.subheader(f"🎯 Single Multi-Timeframe Signal · {selected['base']}/{selected['quote']}")
     st.caption(
@@ -277,7 +286,67 @@ def render_multi_timeframe_dashboard():
             except (PublicDataError, ValueError, KeyError, IndexError, TypeError) as exc:
                 data_errors[tf] = str(exc)
 
-    verdict = combine_timeframes(reports)
+    # Anonymous order-flow and liquidity footprint checks. These extra
+    # read-only public endpoints may be unavailable by region; fail closed.
+    order_notional = (reports["1h"].entry.notional
+                      if "1h" in reports and reports["1h"].entry.notional is not None
+                      else capital * allocation / 100)
+    micro = None
+    micro_error = None
+    try:
+        micro = get_microstructure(symbol, round(float(order_notional), 4))
+    except (PublicDataError, ValueError, KeyError, TypeError) as exc:
+        micro_error = str(exc)
+
+    btc_context = None
+    btc_error = None
+    try:
+        if symbol == "BTCUSDT" and "4h" in frame_bars and "1d" in frame_bars:
+            btc_four, btc_day = frame_bars["4h"], frame_bars["1d"]
+        else:
+            btc_four = get_candles("BTCUSDT", "4h", 1000)
+            btc_day = get_candles("BTCUSDT", "1d", 1000)
+        btc_context = btc_regime(btc_four, btc_day, now=datetime.now(timezone.utc))
+    except (PublicDataError, ValueError, KeyError, TypeError, IndexError) as exc:
+        btc_error = str(exc)
+
+    extra = list(microstructure_checks(micro, now=datetime.now(timezone.utc),
+                                       requested_notional=order_notional))
+    extra.extend(btc_context_checks(btc_context))
+    for tf in ("1h", "15m"):
+        report = reports.get(tf)
+        share = report.taker_buy_share20 if report else float("nan")
+        extra.append(RuleCheck(
+            f"แรงซื้อเชิงรุกจากแท่ง {tf} 20 แท่ง ≥52%",
+            pd.notna(share) and share >= .52,
+            f"Taker Buy {share*100:.1f}%" if pd.notna(share) else "Taker Buy Volume ไม่พร้อม",
+        ))
+    if micro is not None and spot_quote is not None:
+        midpoint = (micro.bid + micro.ask) / 2
+        extra.append(RuleCheck("Spot Last Price ใกล้ Bid/Ask (ไม่เกิน 1%)",
+                               abs(spot_quote - midpoint) / midpoint <= .01,
+                               f"Mid {format_price(midpoint)} {selected['quote']}"))
+
+    verdict = combine_timeframes(reports, additional_checks=extra)
+    st.caption("Smart Money Footprint (ไม่ระบุตัวตนเจ้ามือ): Binance Order Book/Spread/Aggressor Trades + Taker Buy Volume จากแท่งที่ปิดแล้ว + BTC Market Regime")
+    if micro is not None:
+        impact_text = f"{micro.ask_impact_bps:.1f}" if micro.ask_impact_bps is not None else "ไม่พร้อม"
+        st.caption(f"Order Book {micro.source}: Spread {micro.spread_bps:.1f} bps · "
+                   f"Bid Share {micro.near_bid_share*100:.1f}% · Aggressive Buy {micro.aggressor_buy_share*100:.1f}% · "
+                   f"Impact ของมูลค่าซื้อจำลอง {impact_text} bps "
+                   f"· เทรดล่าสุด {micro.last_trade_at.astimezone(BKK):%d/%m %H:%M:%S} น. (เวลาไทย)")
+    elif micro_error:
+        st.warning(f"Spot Order Book / Aggressor Trades ไม่พร้อม: {micro_error} — ไม่ยืนยัน MTF READY")
+    if btc_context is not None:
+        st.caption(f"BTC Regime: 4h {btc_context.trend_4h:+d} / 1d {btc_context.trend_1d:+d} "
+                   "(+1 ขาขึ้น, 0 ไม่ชัด, -1 ขาลง) · ที่มา Binance BTCUSDT Spot")
+    elif btc_error:
+        st.caption(f"BTC Regime ไม่พร้อม: {btc_error}")
+    if "15m" in reports and "1h" in reports:
+        fast_flow = reports["15m"].taker_buy_share20
+        hour_flow = reports["1h"].taker_buy_share20
+        st.caption(f"Taker Buy Volume (แท่งปิด 20 แท่ง): 15m {fast_flow*100:.1f}% "
+                   f"· 1h {hour_flow*100:.1f}% · เป็นตัวแทนแรงซื้อเชิงรุก ไม่ใช่ข้อมูลตัวตนผู้ถือรายใหญ่")
     st.divider()
     if verdict.status == "READY":
         st.success("🟢 MTF BUY · ENTRY READY — เงื่อนไขในกฎทดลองผ่านแล้ว ตรวจราคากระดานจริงก่อนทำรายการ")
@@ -333,7 +402,35 @@ def render_multi_timeframe_dashboard():
                     for blocker in reports[tf].coinglass_blockers:
                         st.warning(f"CoinGlass ({tf}): {blocker}")
 
-    st.caption("MTF เป็นสูตรรวมใหม่แบบทดลอง: ใช้ Spot + Futures สาธารณะจากตลาดที่ระบุ และ CoinGlass ที่กรอกเอง (ถ้ามี) · ไม่ส่งออเดอร์ · ไม่ผ่าน Backtest/Walk-forward ของกฎรวม")
+    st.caption("MTF v2.7 เป็นสูตรรวมแบบทดลอง: Spot + Futures สาธารณะ + Order Book/Trades + BTC Regime + CoinGlass ที่กรอกเอง (ถ้ามี) · ทุกตัวกรองใหม่ยังไม่ได้ผ่าน Backtest แบบครบ · ไม่ส่งออเดอร์")
+    st.divider()
+    st.subheader("📝 บันทึกสัญญาณสำหรับติดตามผลจริง (Paper Journal)")
+    if st.button("💾 บันทึกสัญญาณ MTF นี้ไว้ตรวจภายหลัง", width="stretch"):
+        st.session_state.setdefault("orbit_paper_journal", [])
+        st.session_state["orbit_paper_journal"].append({
+            "observed_at_th": datetime.now(BKK).strftime("%Y-%m-%d %H:%M:%S"),
+            "symbol": symbol, "mtf_signal": verdict.signal, "entry_status": verdict.status,
+            "alignment_index_not_probability": verdict.alignment_index,
+            "spot_last_quote": spot_quote, "entry_low": plan.entry_low if plan else None,
+            "entry_high": plan.entry_high if plan else None,
+            "stop_loss": plan.stop_loss if plan else None,
+            "tp1": plan.take_profit_1 if plan else None,
+            "tp2": plan.take_profit_2 if plan else None,
+            "futures_source": derivatives.source if derivatives else "MISSING",
+            "coinglass_status": "NOT_ENTERED" if snapshot is None else
+                ",".join(r.coinglass_status for r in reports.values()),
+            "spot_spread_bps": micro.spread_bps if micro else None,
+            "aggressor_buy_share": micro.aggressor_buy_share if micro else None,
+            "btc_4h_trend": btc_context.trend_4h if btc_context else None,
+            "btc_1d_trend": btc_context.trend_1d if btc_context else None,
+        })
+        st.success("บันทึกสถานะแล้วในเซสชันนี้ (ยังไม่ใช่ดีลซื้อขายหรือผลกำไร)")
+    journal = st.session_state.get("orbit_paper_journal", [])
+    if journal:
+        st.caption(f"บันทึกแล้ว {len(journal)} รายการ · ข้อมูลนี้อยู่เฉพาะเซสชันเว็บ ควรดาวน์โหลด CSV เก็บเอง")
+        st.download_button("ดาวน์โหลด Paper Journal CSV",
+                           pd.DataFrame(journal).to_csv(index=False).encode("utf-8-sig"),
+                           file_name="Orbit_Paper_Signal_Journal.csv", mime="text/csv")
     return
 
 with tabs[1]:
@@ -524,25 +621,75 @@ with tabs[3]:
             st.caption("แต่ละช่วงเริ่มต้นด้วยทุนจำลองเท่ากัน ผลตอบแทนแต่ละช่วงไม่ควรบวกตรง ๆ แทนพอร์ตต่อเนื่อง")
 
 with tabs[4]:
+    st.subheader("📈 MTF Historical Research — เฉพาะข้อมูล Spot ที่ย้อนหลังได้")
+    st.warning(
+        "นี่เป็นการทดสอบ **ส่วนย่อยของ MTF**: กราฟ 15m/1h/4h/1d + Taker Buy Volume "
+        "+ Entry จากแท่ง 1h ที่ปิดแล้ว · ไม่รวม Order Book, aggTrades, BTC regime, "
+        "Kraken/Binance Futures และ CoinGlass ย้อนหลัง จึง **ไม่ใช่ Backtest ของ Final v2.7**"
+    )
+    st.caption("เข้าเทรดได้เร็วสุดที่ราคาเปิดแท่ง 1h ถัดไป และต้องยังอยู่ในโซนที่คำนวณจากแท่งก่อน · รวม fee/slippage จำลอง · TP2 เท่านั้น ไม่มีการแบ่งขาย TP1")
+    if st.button("▶️ รันทดสอบ MTF Spot-only + Walk-forward", width="stretch"):
+        try:
+            with st.spinner("กำลังโหลดประวัติแท่งที่ปิดแล้วและทดสอบแยกช่วง Train/Test..."):
+                n_hour = min(2500, max(history_size, 1500))
+                research_count = {"15m": min(10000, 4 * n_hour),
+                                  "1h": n_hour, "4h": max(1000, n_hour), "1d": 1000}
+                history = {tf: get_candles(symbol, tf, n) for tf, n in research_count.items()}
+                research_frames = {}
+                for tf in TIMEFRAMES:
+                    research_frames[tf] = with_signal(prepare_features(
+                        history[tf], history[HIGHER_TIMEFRAME[tf]], tf, pivot_bars=pivot_bars))
+                trial_features = historical_mtf_features(research_frames, config)
+                fixed = run_mtf_backtest(trial_features, config, 70)
+                wf_mtf = mtf_walk_forward(trial_features, config)
+            s = fixed["stats"]
+            st.caption("สัญญาณย้อนหลังใช้คะแนนเกณฑ์ 70 และแยกการเลือกเกณฑ์ Train/Test ของ Walk-forward")
+            cols = st.columns(2)
+            cols[0].metric("Trades (Spot-only MTF)", str(s["trades"]))
+            cols[1].metric("Return", f"{s['return_pct']:+.2f}%")
+            cols = st.columns(2)
+            cols[0].metric("Win Rate", f"{s['win_rate_pct']:.1f}%")
+            cols[1].metric("Max Drawdown", f"{s['max_drawdown_pct']:.2f}%")
+            if s["trades"] < 30:
+                st.warning("ยังมีดีลน้อยกว่า 30 ครั้ง สรุปความแม่นยำหรือประสิทธิภาพไม่ได้")
+            st.line_chart(fixed["equity"], height=220)
+            if not fixed["trades"].empty:
+                st.download_button("ดาวน์โหลด MTF Research Trades CSV",
+                                   fixed["trades"].to_csv(index=False).encode("utf-8-sig"),
+                                   file_name=f"Orbit_MTF_Research_{symbol}.csv", mime="text/csv")
+            if wf_mtf["status"] == "OK":
+                folds = pd.DataFrame(wf_mtf["folds"])
+                st.dataframe(folds, width="stretch")
+                if not folds["train_qualified"].all() or int(folds["trades"].sum()) < 30:
+                    st.warning("จำนวนดีล Train/Test ไม่พอ หรือบางช่วง Train เลือกเกณฑ์ไม่ได้ · ห้ามอ้างว่า MTF ผ่านการพิสูจน์")
+            else:
+                st.warning(wf_mtf["reason"])
+        except (PublicDataError, ValueError, KeyError, IndexError, TypeError) as exc:
+            st.error(f"MTF Research ไม่พร้อม: {exc}")
+            st.info("บางเหรียญมีประวัติไม่ถึง 250 แท่ง Daily หรือไม่มี Taker Buy Volume; ไม่เติมข้อมูลปลอมเพื่อให้ผลดูดี")
+
+with tabs[5]:
     st.markdown("""
     ### วิธีใช้
     1. เลือกสกุลราคา แล้วพิมพ์รหัสเหรียญ (เช่น `BTC` หรือ `XRP`) ในแถบซ้าย
-    2. เปิดแท็บ **🎯 สัญญาณ MTF รวม** เพื่อให้ระบบวิเคราะห์ 15m+1h+4h+1d และสรุปผลซื้อ/รอ **เป็นชุดเดียว** (ไม่ต้องเปลี่ยน Timeframe ในเมนู)
+    2. เปิด **🎯 สัญญาณ MTF รวม** เพื่อให้ระบบวิเคราะห์ 15m+1h+4h+1d, Spot Order Book, Aggressor Trades, Taker Buy Volume, BTC Market Regime และ Futures ที่ดึงได้ แล้วสรุปผล **เป็นชุดเดียว**
     3. อ่าน **คะแนนความสอดคล้องถ่วงน้ำหนัก** (ไม่ใช่โอกาสทำกำไร) พร้อม Entry Zone / SL / TP ที่อิงกรอบ 1h ชุดเดียว
-    4. **MTF BUY BIAS ไม่เท่ากับ READY**: หากราคา/แท่งยังไม่ยืนยันจะขึ้น WAIT FOR ENTRY; กด **ทำไม MTF ยังรอ?** เพื่ออ่านเงื่อนไขรวม
-    5. เปิด **📊 สัญญาณละเอียด** หากต้องการดูกราฟ/หลักฐานแยกช่วงเวลา หรือกรอก CoinGlass ด้วยมือ ซึ่งจะถูกตรวจภายในผล MTF ด้วย
-    6. เปิดแท็บ **Backtest** และ **Walk-forward** เพื่อตรวจสถิติย้อนหลัง (เฉพาะกลยุทธ์เทคนิคเดิม ไม่รวมสูตร MTF รวม)
-    7. กด **🔄 ดึงข้อมูลใหม่** เมื่อต้องการประเมินราคา/แท่งล่าสุดอีกครั้ง ไม่ใช่การอัปเดตราคาอัตโนมัติทุกวินาที
+    4. **READY เป็นเกณฑ์ทดลอง** และต้องผ่านทุกข้อ: คลิก **🔎 ทำไม MTF ยังรอ?** เพื่อดูหลักฐาน Spot, Futures และตัวกรองอื่นว่าขาดข้อใด อย่าซื้อจากโซนราคาอย่างเดียว
+    5. เปิด **📊 สัญญาณละเอียด** หากต้องการดูกราฟ/หลักฐานแยกช่วงเวลา หรือกรอก CoinGlass ด้วยมือ ซึ่งเป็นตัวกรองเสริมในผล MTF
+    6. เปิดแท็บ **🧪 Backtest** และ **🔁 Walk-forward** เพื่อตรวจสถิติเทคนิคเดิม; กดปุ่มใน **📈 MTF Research** เพื่อทดลองย้อนหลังส่วนย่อย MTF Spot-only ที่มีข้อมูลย้อนหลังจริง
+    7. กด **💾 บันทึกสัญญาณ MTF นี้** เพื่อเก็บ Paper Journal ในเซสชัน และดาวน์โหลด CSV เก็บเอง; ไม่ใช่ประวัติการซื้อขายหรือกำไรจริง
+    8. กด **🔄 ดึงข้อมูลใหม่** เมื่อต้องการประเมินราคา/แท่งล่าสุดอีกครั้ง ไม่ใช่การอัปเดตราคาอัตโนมัติทุกวินาที
 
     ### ข้อจำกัดสำคัญ
     - CoinGlass API ทางการเป็นบริการที่ใช้ API Key และแพ็กเกจชำระเงิน ณ วันที่ตรวจสอบ ดังนั้นโหมดฟรีต้องกรอกค่าด้วยมือ
-    - ผล Backtest/Walk-forward **ไม่ได้รวม Kraken/Binance/Bybit Futures หรือ CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวมแล้ว
-    - **สูตร Single Multi-Timeframe และ Entry Zone, SL, TP ของ v2.6.1 ยังไม่ได้ Backtest/Walk-forward แบบครบกฎ**; เป็น heuristic เฝ้ารอเท่านั้น อาจคลาดเคลื่อนหรือไม่เกิดโซนที่ใช้ได้ในบางตลาด
+    - **ไม่สามารถระบุตัวเจ้ามือได้จาก Public API:** Order Book เป็นคำสั่งที่ยกเลิกได้และมีความเสี่ยง Spoofing; `aggTrades` และ Taker Buy Volume เป็นธุรกรรมที่ไม่เปิดเผยตัวผู้ซื้อขาย; Bid Share/Aggressor Buy เป็นเพียงตัวแทนแรงซื้อขาย
+    - เกณฑ์ใหม่ด้าน Order Book, Spread, Slippage Impact, BTC Market Regime และแรงซื้อเป็น **สมมติฐานทดลอง** ไม่ใช่สูตรที่ผ่านการตรวจความแม่นยำหรือรับรองผลกำไร
+    - **MTF Research ทดสอบส่วนย่อยบน Spot** ที่มีแท่งปิด, Taker Buy และ Entry 1h แต่ **ไม่ได้รวม Order Book, Aggressor Trades, BTC Regime, Futures และ CoinGlass ย้อนหลัง**; ห้ามอ้างว่า Full Final Signal v2.7 ผ่าน Backtest แล้ว
     - ข้อมูลอนุพันธ์มาจาก Kraken Perpetual USD, Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะเหรียญที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
     - ไม่ได้รับข้อมูล Liquidations 24h ครบจาก Public API ที่ใช้ จึงไม่ใช้ใน Auto Signal
     - ข้อมูลจาก Binance Spot อาจไม่ตรงกับตลาดที่ผู้ใช้ซื้อขายจริง รวมถึงอาจถูกจำกัดการเข้าถึงบางเครือข่าย/ภูมิภาค
     - ไม่มีการส่งออเดอร์, ไม่มีการใช้ Leverage, ไม่มีการเปิด Short และไม่มีแจ้งเตือน Push ในรุ่นนี้
     - Market Structure เป็น Pivot/BOS/Sweep ตามกฎ ไม่ได้ครอบคลุมข่าว, On-chain, Order Book History หรือระบบสถาบันทั้งหมด
-    - Walk-forward เป็นการทดสอบเกณฑ์คะแนน 5/6/7 เฉพาะชุดกฎนี้ และอาจมีตัวอย่างน้อยเกินกว่าจะสรุปผล
+    - Walk-forward เทคนิคเดิมทดสอบคะแนน 5/6/7 ส่วน MTF Research เลือกเกณฑ์ 65/70/75 ในช่วงฝึกเท่านั้น; ตัวอย่างอาจน้อยเกินกว่าจะสรุปผล
     - ข้อมูลราคาที่ใช้มีจำนวนจำกัดตามที่เลือก; โปรดดูจำนวนดีลและสภาวะตลาดก่อนสรุปความน่าเชื่อถือ
     """)

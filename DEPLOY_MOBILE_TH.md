@@ -3,13 +3,13 @@
 ชุดนี้พร้อมนำไปใช้กับ **Streamlit Community Cloud** โดยไม่ต้องมีคอมพิวเตอร์เปิดโปรแกรมตลอดเวลา
 แต่ต้องใช้บัญชี **GitHub** และ **Streamlit Community Cloud** ของคุณเองเพื่อเผยแพร่แอป
 
-## อัปเดตเว็บเดิมเป็น v2.6.1 (Single MTF)
+## อัปเดตเว็บเดิมเป็น v2.7 (Smart Money Footprint + Single MTF)
 
-1. ดาวน์โหลด ZIP v2.6.1 แล้วแตกไฟล์ในคอมพิวเตอร์ก่อน
+1. ดาวน์โหลด ZIP v2.7 แล้วแตกไฟล์ในคอมพิวเตอร์ก่อน
 2. เปิด GitHub repository เดิมที่พรรณใช้ เช่น `Punnipah/orbit-crypto-signal-lab`
-3. อัปโหลดไฟล์ในโฟลเดอร์ `orbit_crypto_signal_lab` **ทับชื่อไฟล์เดิมที่ root ของ repository** โดยเฉพาะ **`app.py`, `multi_timeframe.py` และไฟล์ใหม่ `confluence.py`**, รวมทั้ง `tests/test_confluence.py`; คง `entry_planner.py`, `public_derivatives.py`, `coinglass_overlay.py`, `display_format.py`, `requirements.txt`, `README.md` และไฟล์อื่นใน ZIP ให้ครบ
+3. อัปโหลดไฟล์ในโฟลเดอร์ `orbit_crypto_signal_lab` **ทับชื่อไฟล์เดิมที่ root ของ repository** รวมทั้งโมดูลใหม่ **`market_microstructure.py`, `btc_market.py`, `mtf_research.py`** และโมดูลที่ปรับ `app.py`, `binance_data.py`, `research_engine.py`, `multi_timeframe.py`, `confluence.py`, `backtest_engine.py` พร้อมไฟล์อื่นใน ZIP ให้ครบ
 4. กด `Commit changes` แล้วรอ Streamlit Community Cloud ดึง commit ใหม่/รีสตาร์ตแอป
-5. รีเฟรชหน้าเว็บและดูบรรทัดใต้ชื่อแอปว่าขึ้น `v2.6.1`; จากนั้นเปิดแท็บ **🎯 สัญญาณ MTF รวม** ไม่ต้องสร้างแอปใหม่หรือเปลี่ยน Main file path (`app.py`)
+5. รีเฟรชหน้าเว็บและดูบรรทัดใต้ชื่อแอปว่าขึ้น `v2.7`; จากนั้นเปิดแท็บ **🎯 สัญญาณ MTF รวม** ไม่ต้องสร้างแอปใหม่หรือเปลี่ยน Main file path (`app.py`)
 
 **ข้อควรระวัง:** GitHub `Add file → Upload files` ไม่สามารถเขียนทับไฟล์เดิมในทุกกรณีได้ด้วยการลากวางแบบเดียวกัน หากเว็บแจ้งชื่อไฟล์ซ้ำ/ไม่ยอมอัปโหลด ให้เปิดไฟล์นั้นใน GitHub → ไอคอนดินสอ `Edit` → วางเนื้อหาใหม่ → `Commit changes` ทีละไฟล์ หรือใช้ GitHub Desktop (ฟรี) เพื่อ commit โฟลเดอร์ทั้งหมดในครั้งเดียว อย่าลบ repository หรือ Streamlit app เดิมเพื่ออัปเดต
 
@@ -27,7 +27,7 @@
 3. ตั้งชื่อ `orbit-crypto-signal-lab` เลือก `Private` ถ้าต้องการจำกัดผู้เข้าชม หรือ `Public` ถ้าตั้งใจเผยแพร่สาธารณะ แล้วกด `Create repository`
 4. ในหน้า repository เลือก `Add file` → `Upload files`
 5. **ลากเนื้อหาทั้งหมดของโฟลเดอร์ `orbit_crypto_signal_lab`** ลงไป โดยให้ `app.py` และ `requirements.txt` อยู่ที่ราก repository (ไม่อยู่ในโฟลเดอร์ซ้อน)
-6. ตรวจว่ามี `app.py`, `requirements.txt`, `binance_data.py`, `analysis_engine.py`, `research_engine.py`, `market_structure.py`, `backtest_engine.py`, `coinglass_overlay.py`, `public_derivatives.py`, `display_format.py`, `entry_planner.py`, **`multi_timeframe.py` และ `confluence.py`** ครบ
+6. ตรวจว่ามี `app.py`, `requirements.txt`, `binance_data.py`, `analysis_engine.py`, `research_engine.py`, `market_structure.py`, `backtest_engine.py`, `coinglass_overlay.py`, `public_derivatives.py`, `display_format.py`, `entry_planner.py`, **`multi_timeframe.py`, `confluence.py`, `market_microstructure.py`, `btc_market.py` และ `mtf_research.py`** ครบ
 7. กด `Commit changes`
 
 > หมายเหตุ: อัปโหลดผ่านเว็บ GitHub บางกรณีโฟลเดอร์ `.streamlit` ที่ซ่อนอาจไม่ถูกเลือกหรืออัปโหลด ไม่เป็นไร แอปยังรันได้ด้วยค่าเริ่มต้นของ Streamlit; ธีมอาจต่างเล็กน้อย
@@ -50,11 +50,12 @@
 2. แตะลูกศรเมนูซ้ายบนเพื่อเปิดแถบ `ค้นหาเหรียญ`
 3. ค้นหา `BTC`, `ETH`, `SOL`, `DOGE` หรือคู่เหรียญอื่นในตลาด Spot ที่ Binance แสดง
 4. เลือกคู่เหรียญ และจำนวนแท่งประวัติ; มือถือแนะนำเริ่มที่ **1000–1500 แท่ง** เพราะหน้ารวมต้องเรียกข้อมูลทั้ง 4 ช่วงเวลา
-5. เปิดแท็บเริ่มต้น **🎯 สัญญาณ MTF รวม** โปรแกรมวิเคราะห์ 15m, 1h, 4h, 1d อัตโนมัติหลังเลือกเหรียญ แล้วแสดง **สัญญาณรวมหนึ่งค่า** และ **Entry Zone/SL/TP ชุดเดียว** ไม่ต้องเลือก Timeframe ทีละกรอบ
+5. เปิดแท็บเริ่มต้น **🎯 สัญญาณ MTF รวม** โปรแกรมวิเคราะห์ 15m, 1h, 4h, 1d อัตโนมัติหลังเลือกเหรียญ แล้วตรวจ **Spot Order Book, Aggressor Trades, Taker Buy Volume, BTC Regime** ร่วมกับ Futures สาธารณะ ก่อนแสดง **สัญญาณรวมหนึ่งค่า** และ **Entry Zone/SL/TP ชุดเดียว** ไม่ต้องเลือก Timeframe ทีละกรอบ
 6. ในแท็บ **📊 สัญญาณละเอียด** ดูกราฟและแหล่ง Kraken/Binance/Bybit Futures แล้วกรอก CoinGlass เป็นตัวกรองเสริม; วางเลข CoinGlass 5 ค่าในช่องเดียวได้ เมื่อบันทึกแล้วกลับมาดูผล MTF รวม
 7. หากขึ้น `MTF BUY BIAS · WAIT FOR ENTRY` หมายถึง **ทิศทางสนับสนุน แต่ยังไม่ถึงเงื่อนไขซื้อ**; กด **ทำไม MTF ยังรอ?** เพื่อดูเหตุผลและเวลาแท่งถัดไป
-8. ในแท็บ `Backtest` และ `Walk-forward` ดูผลเฉพาะกฎเทคนิคเดิม โดยตรวจจำนวนเทรดก่อนเชื่อถือผล
-9. iPhone: Safari → แชร์ → `Add to Home Screen` เพื่อมีไอคอนทางลัด; Android: Chrome → เมนู → `Add to Home screen` หากเบราว์เซอร์รองรับ
+8. เปิดหัวข้อ **🔎 ทำไม MTF ยังรอ?** เพื่ออ่านเกณฑ์ที่ผ่าน/ไม่ผ่าน **ทุกข้อ** (ข้อมูลใดหายหรือไม่สดจะยังไม่ให้ READY) และกด **💾 บันทึกสัญญาณ MTF นี้** หากต้องการเก็บ Paper Journal ก่อนดาวน์โหลด CSV; ไม่ใช่ระบบบันทึกดีลจริง
+9. ในแท็บ `Backtest` และ `Walk-forward` ดูผลเฉพาะกฎเทคนิคเดิม ส่วน **📈 MTF Research** กดทดสอบชุดกฎ MTF เฉพาะข้อมูล Spot ย้อนหลังได้ และต้องดูจำนวนดีลก่อนสรุปผล
+10. iPhone: Safari → แชร์ → `Add to Home Screen` เพื่อมีไอคอนทางลัด; Android: Chrome → เมนู → `Add to Home screen` หากเบราว์เซอร์รองรับ
 
 ## ข้อจำกัดที่ต้องเข้าใจ
 
@@ -63,8 +64,10 @@
 - Repository `Public` = โค้ดเปิดเผย; แอปอาจเปิดเผยแก่ทุกคนที่มีลิงก์ด้วย ตั้งค่า Private ตามความเหมาะสมและตรวจสิทธิ์บน Streamlit อีกครั้ง
 - ข้อมูล CoinGlass ที่กรอกอยู่ใน Streamlit session ของอุปกรณ์/เบราว์เซอร์ ไม่ซิงก์ข้ามเครื่อง และอาจหายเมื่อเซสชันสิ้นสุด อย่ากรอกข้อมูลส่วนตัวหรือรหัสผ่าน
 - CoinGlass ไม่เชื่อม API ฟรีอัตโนมัติ; หากต้องการตัวกรอง CoinGlass ต้องกรอก Funding / OI / Long-Short / Liquidations เองและยืนยัน หากกรอกแล้วไม่ผ่านจะทำให้ WAIT
+- **Order Book เป็นภาพ ณ ขณะร้องขอ ไม่ใช่ข้อมูลคำสั่งซื้อย้อนหลังหรือหลักฐานระบุตัวเจ้ามือ:** คำสั่งใน Book อาจถูกยกเลิก/ทำ Spoofing ได้; `aggTrades` และ Taker Buy เป็นธุรกรรมแบบไม่ระบุตัวตน จึงบอกไม่ได้ว่าเงินของรายใหญ่รายใดกำลังเข้าซื้อจริง
+- ค่าเกณฑ์ Spread, Bid Share, Aggressive Buy และ BTC Regime เป็น **heuristic ทดลอง** ยังไม่ได้พิสูจน์ประสิทธิภาพโดยการทดสอบ Full Signal จึงไม่ใช่คะแนนความแม่นยำที่ตรวจสอบแล้ว
 - Auto Futures ลอง Kraken ก่อน (ทดสอบสด BTC และ PEPE ผ่านแล้ว) หากไม่พร้อมจึงใช้ Binance/Bybit โดยใช้ข้อมูลตลาดเดียวต่อครั้ง ไม่ผสมกัน; HTTP 451/403 และเครือข่ายโฮสต์อาจทำให้เป็น WAIT
-- Backtest/Walk-forward **ไม่** ได้ทดสอบ Entry Zone/SL/TP1–TP2 ใหม่, กฎ Futures หรือ CoinGlass ย้อนหลัง ผลทดสอบไม่ได้ยืนยันว่าแผนซื้อใหม่ทำกำไรจริง
+- Backtest/Walk-forward เดิม **ไม่ได้** ทดสอบ Entry Zone/SL/TP1–TP2 ใหม่, กฎ Futures หรือ CoinGlass ย้อนหลัง; **MTF Research** เพิ่มการทดสอบ MTF/Entry แบบ Spot-only โดยยัง **ไม่รวม historical Order Book/Aggressor Trades/BTC Regime/Futures/CoinGlass** ผลทุกส่วนจึงยังไม่รับรอง Final Signal v2.7
 - `READY` เป็นเพียงการผ่านเกณฑ์ของแท่งที่ปิดแล้ว ต้องตรวจราคาที่ซื้อจริงและเงื่อนไขกระดาน; ไม่มีการแจ้งเตือน/ซื้อขายอัตโนมัติ
 - READY ยังต้องอาศัยราคา Spot ล่าสุดจาก Binance `ticker/price`; API นี้ไม่บอกเวลาของดีลล่าสุด จึงไม่ใช่คำรับรองว่าสามารถซื้อได้ที่ราคาเดียวกัน และหน้าเว็บไม่ได้อัปเดตเองทุกวินาที หากดึงไม่ได้จะเป็น `WAIT_LIVE_QUOTE`
 - ระบบไม่ส่งคำสั่งซื้อขาย ไม่เชื่อม Exchange Account หรือเก็บ API key
@@ -76,8 +79,9 @@
 | อาการ | วิธีตรวจ |
 |---|---|
 | `ModuleNotFoundError` | `requirements.txt` ต้องอยู่ใน repo และ `app.py` ต้องอยู่ระดับเดียวกับโมดูล Python |
-| `No module named 'multi_timeframe'` | v2.6.1 ต้องอัปโหลด `multi_timeframe.py` ไปที่ root ของ repo ระดับเดียวกับ `app.py` แล้วรีสตาร์ตแอป |
-| `No module named 'confluence'` | v2.6.1 ต้องอัปโหลดไฟล์ใหม่ `confluence.py` ไปที่ root ของ repo ระดับเดียวกับ `app.py` แล้วรีสตาร์ตแอป |
+| `No module named 'multi_timeframe'` หรือ `confluence` | อัปโหลด `multi_timeframe.py` และ `confluence.py` ไปที่ root ของ repo ระดับเดียวกับ `app.py` แล้วรีสตาร์ตแอป |
+| `No module named 'market_microstructure'`, `btc_market` หรือ `mtf_research` | ยังไม่ได้อัปโหลดไฟล์ Python ใหม่ของ v2.7; คัดลอกจาก ZIP ไปไว้ระดับเดียวกับ `app.py` |
+| MTF `WAIT` ทั้งที่กราฟ Spot เป็นขาขึ้น | คลิก **ทำไม MTF ยังรอ?** — ข้อมูล Futures, Order Book, Taker Flow, BTC, CoinGlass (ถ้ากรอก) หรือความสดอาจไม่ผ่าน; ระบบไม่เติมค่าปลอม |
 | `File not found: app.py` | ตรวจ Main file path และโครงสร้าง repo (อย่าใส่ชื่อโฟลเดอร์เพิ่มถ้าไฟล์อยู่ root) |
 | ไม่เจอเหรียญ | เปลี่ยนสกุลราคาเป็น `ทั้งหมด` หรือค้นรหัส เช่น `ETH` |
 | Binance API ใช้ไม่ได้ | ดูข้อความ error; ถ้าโฮสต์ถูกจำกัด API ให้รอ/ลองใหม่ โดยไม่พยายามเลี่ยงข้อจำกัด |

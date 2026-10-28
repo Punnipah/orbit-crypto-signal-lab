@@ -45,6 +45,16 @@ def prepare_features(base: pd.DataFrame, higher: pd.DataFrame, timeframe: str,
         f["higher_trend"] = pd.Series(matched["higher_trend"].fillna(0).to_numpy(dtype=int), index=f.index)
 
     f["volume_ratio"] = f["volume"] / f["volume_ma20"].replace(0, np.nan)
+    if "taker_buy_base" in f:
+        taker = f["taker_buy_base"]
+        # Share of aggressively executed BUY volume over the last 20 *closed*
+        # candles. This is an anonymous market-flow proxy, not a whale ID.
+        f["taker_buy_share20"] = (taker.rolling(20, min_periods=20).sum()
+                                   / f["volume"].rolling(20, min_periods=20).sum().replace(0, np.nan))
+        f["taker_net_flow20"] = (2 * taker - f["volume"]).rolling(20, min_periods=20).sum()
+    else:
+        f["taker_buy_share20"] = np.nan
+        f["taker_net_flow20"] = np.nan
     ema_vote = np.select([f["ema20"] > f["ema50"], f["ema20"] < f["ema50"]], [1, -1], default=0)
     macd_vote = np.select([f["macd_hist"] > 0, f["macd_hist"] < 0], [1, -1], default=0)
     rsi_vote = np.select([f["rsi"].between(52, 70), f["rsi"].between(30, 48)], [1, -1], default=0)

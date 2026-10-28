@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from multi_timeframe import RuleCheck, TimeframeReport
 from entry_planner import EntryPlan
@@ -32,7 +32,8 @@ class ConfluenceVerdict:
     next_1h_close: datetime | None
 
 
-def combine_timeframes(reports: Mapping[str, TimeframeReport]) -> ConfluenceVerdict:
+def combine_timeframes(reports: Mapping[str, TimeframeReport], *,
+                       additional_checks: Sequence[RuleCheck] = ()) -> ConfluenceVerdict:
     """Require independent timeframe context before proposing one 1h entry plan.
 
     Roles: 1d + 4h bullish context, 1h final BUY and entry zone, 15m final
@@ -81,6 +82,10 @@ def combine_timeframes(reports: Mapping[str, TimeframeReport]) -> ConfluenceVerd
                   "ไม่ใช้แท่งเทียนที่ยังไม่ปิด"),
     ])
 
+    # Public microstructure and BTC context are independent veto filters for
+    # the stricter v2.7 dashboard. With no extra filters, this keeps the v2.6
+    # base research engine usable for transparent comparative tests.
+    checks.extend(additional_checks)
     bias = all(c.passed for c in checks)
     entry = hour.entry if hour is not None else None
     ready = bias and entry is not None and entry.status == "READY"

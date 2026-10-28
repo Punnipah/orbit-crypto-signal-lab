@@ -43,6 +43,7 @@ class TimeframeReport:
     rsi: float
     adx: float
     volume_ratio: float
+    taker_buy_share20: float
     trend: int
     higher_trend: int
     structure_bias: int
@@ -174,7 +175,9 @@ def build_timeframe_report(
         checks=tuple(checks), last_close=last_close,
         price_change_24h_pct=price_change, score=int(row["score"]),
         rsi=float(row["rsi"]), adx=float(row["adx"]),
-        volume_ratio=float(row["volume_ratio"]), trend=int(row["trend"]),
+        volume_ratio=float(row["volume_ratio"]),
+        taker_buy_share20=float(row.get("taker_buy_share20", float("nan"))),
+        trend=int(row["trend"]),
         higher_trend=int(row["higher_trend"]),
         structure_bias=int(row["structure_bias"]),
         green_candle=float(row["close"]) > float(row["open"]),

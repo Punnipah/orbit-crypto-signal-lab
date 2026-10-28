@@ -54,13 +54,18 @@ def _stats(trades: list[dict], equity: pd.DataFrame, capital: float, benchmark: 
 
 
 def simulate(features: pd.DataFrame, config: BacktestConfig,
-             *, threshold: int | None = None, start: int = 250, end: int | None = None) -> dict:
+             *, threshold: int | None = None, start: int = 250, end: int | None = None,
+             precomputed_signals: bool = False, planned_levels: bool = False) -> dict:
     """Run the historical technical strategy with spot-only execution.
 
     CoinGlass is excluded because a historical dataset has not been obtained.
     """
     config.check()
-    f = with_signal(features, threshold=threshold)
+    f = features.copy() if precomputed_signals else with_signal(features, threshold=threshold)
+    if precomputed_signals and "signal" not in f.columns:
+        raise ValueError("ต้องมีสัญญาณที่คำนวณก่อนแล้ว")
+    if planned_levels and not precomputed_signals:
+        raise ValueError("ระดับราคาแผนต้องใช้กับสัญญาณที่คำนวณก่อนแล้วเท่านั้น")
     n = len(f)
     end = n if end is None else min(n, end)
     start = max(250, start)
@@ -105,13 +110,30 @@ def simulate(features: pd.DataFrame, config: BacktestConfig,
         if units == 0 and not blocked and prev["signal"] == "BUY":
             atr, support = float(prev["atr"]), float(prev["support50"])
             if np.isfinite(atr) and atr > 0:
+                if planned_levels:
+                    zone_low = float(prev.get("mtf_entry_low", float("nan")))
+                    zone_high = float(prev.get("mtf_entry_high", float("nan")))
+                    planned_stop = float(prev.get("mtf_stop", float("nan")))
+                    planned_target = float(prev.get("mtf_tp2", float("nan")))
+                    # Next-bar open must still be inside the planned zone.
+                    # Never fill a retrospective signal at its old close.
+                    if not (np.isfinite(zone_low) and np.isfinite(zone_high)
+                            and zone_low <= open_price <= zone_high
+                            and np.isfinite(planned_stop) and np.isfinite(planned_target)):
+                        planned_stop = float("nan")
+                        planned_target = float("nan")
                 fill = open_price * (1 + slip)
-                proposed_stop = fill - 1.5 * atr
-                if np.isfinite(support):
-                    proposed_stop = min(proposed_stop, support - 0.2 * atr)
+                if planned_levels:
+                    proposed_stop = planned_stop
+                    proposed_target = planned_target
+                else:
+                    proposed_stop = fill - 1.5 * atr
+                    if np.isfinite(support):
+                        proposed_stop = min(proposed_stop, support - 0.2 * atr)
+                    proposed_target = None
                 proposed_stop = max(0.0, proposed_stop)
                 distance = fill - proposed_stop
-                if distance > 0 and distance / fill <= 0.15:
+                if distance > 0 and distance / fill <= 0.15 and (not planned_levels or proposed_target > fill):
                     risk_money = cash * config.risk_per_trade_pct / 100
                     budget = cash * config.max_allocation_pct / 100
                     amount = min(risk_money / distance, budget / (fill * (1 + fee)))
@@ -119,14 +141,14 @@ def simulate(features: pd.DataFrame, config: BacktestConfig,
                     if amount > 0 and cost <= cash:
                         cash -= cost
                         units, entry_price, entry_cost, entry_at = amount, fill, cost, current.name
-                        stop, target = proposed_stop, fill + 2 * distance
+                        stop, target = proposed_stop, proposed_target if planned_levels else fill + 2 * distance
 
         if units > 0:
             # If both stop and target are inside the candle, count the STOP first.
             if float(current["low"]) <= stop:
                 close_position(min(open_price, stop), current.name, "stop_loss")
             elif float(current["high"]) >= target:
-                close_position(target, current.name, "take_profit_2R")
+                close_position(target, current.name, "planned_tp2" if planned_levels else "take_profit_2R")
 
         marked_equity = cash + units * float(current["close"])
         peak_equity = max(peak_equity, marked_equity)

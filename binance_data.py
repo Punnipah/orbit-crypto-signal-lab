@@ -81,11 +81,17 @@ def parse_klines(rows: list) -> pd.DataFrame:
     f = pd.DataFrame(rows)
     if f.shape[1] < 7:
         raise PublicDataError("รูปแบบข้อมูลแท่งเทียนไม่ถูกต้อง")
-    f = f.iloc[:, [0, 1, 2, 3, 4, 5, 6]].copy()
-    f.columns = ["open_ms", "open", "high", "low", "close", "volume", "close_ms"]
+    # Binance full klines also expose taker-buy volume at index 9.
+    # Earlier synthetic/third-party test rows can have only seven fields:
+    # missing aggressor data must remain NaN, never be fabricated as 50/50.
+    has_taker = f.shape[1] >= 11
+    f = f.iloc[:, [0, 1, 2, 3, 4, 5, 6] + ([9] if has_taker else [])].copy()
+    f.columns = ["open_ms", "open", "high", "low", "close", "volume", "close_ms"] + (["taker_buy_base"] if has_taker else [])
+    if not has_taker:
+        f["taker_buy_base"] = float("nan")
     f["open_ms"] = pd.to_numeric(f["open_ms"], errors="raise").astype("int64")
     f["close_ms"] = pd.to_numeric(f["close_ms"], errors="raise").astype("int64")
-    for col in ("open", "high", "low", "close", "volume"):
+    for col in ("open", "high", "low", "close", "volume", "taker_buy_base"):
         f[col] = pd.to_numeric(f[col], errors="raise").astype(float)
     f.index = pd.to_datetime(f["open_ms"], unit="ms", utc=True)
     f.index.name = "timestamp_utc"
@@ -93,6 +99,8 @@ def parse_klines(rows: list) -> pd.DataFrame:
     f = f[~f.index.duplicated(keep="last")].sort_index()
     if (f[["open", "high", "low", "close"]] <= 0).any().any() or (f["volume"] < 0).any():
         raise PublicDataError("พบราคาหรือ Volume ผิดปกติ")
+    if ((f["taker_buy_base"] < 0) | (f["taker_buy_base"] > f["volume"] * (1 + 1e-8))).any():
+        raise PublicDataError("Taker Buy Volume อยู่นอกช่วง Volume รวม")
     return f
 
 
