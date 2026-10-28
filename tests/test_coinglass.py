@@ -35,9 +35,22 @@ class TestCoinGlassOverlay(unittest.TestCase):
         self.assertEqual(result["signal"], "SELL")
 
     def test_crowded_longs_block_buy(self):
-        result = confirm_signal("BUY", snapshot(long_short_account_ratio=2.3), "BTC", 2, now=NOW)
+        result = confirm_signal("BUY", snapshot(long_short_account_ratio=1.66), "BTC", 2, now=NOW)
         self.assertEqual(result["signal"], "WAIT")
         self.assertEqual(result["status"], "CAUTION")
+        self.assertIn("1.660 > 1.600", result["blocking_reasons"][0])
+
+    def test_account_ratio_boundary_is_not_automatically_rejected(self):
+        result = confirm_signal("BUY", snapshot(long_short_account_ratio=1.6), "BTC", 2, now=NOW)
+        self.assertEqual(result["status"], "CONFIRMED")
+        self.assertEqual(result["blocking_reasons"], [])
+
+    def test_funding_and_crowding_both_show_as_specific_blockers(self):
+        result = confirm_signal("BUY", snapshot(funding_rate_pct=0.06,
+                                                 long_short_account_ratio=1.7), "BTC", 2, now=NOW)
+        self.assertEqual(len(result["blocking_reasons"]), 2)
+        self.assertTrue(any("+0.0600%" in reason for reason in result["blocking_reasons"]))
+        self.assertTrue(any("1.700 > 1.600" in reason for reason in result["blocking_reasons"]))
 
     def test_falling_oi_blocks_buy(self):
         result = confirm_signal("BUY", snapshot(oi_change_24h_pct=-3), "BTC", 2, now=NOW)
@@ -47,6 +60,7 @@ class TestCoinGlassOverlay(unittest.TestCase):
         result = confirm_signal("BUY", snapshot(observed_at=NOW-timedelta(hours=5)), "BTC", 2,
                                 now=NOW, max_age_hours=2)
         self.assertEqual(result["status"], "INVALID")
+        self.assertTrue(any("เก่าเกิน" in why for why in result["blocking_reasons"]))
 
     def test_wrong_coin_blocks_trade_signal(self):
         result = confirm_signal("BUY", snapshot(symbol="ETH"), "BTC", 2, now=NOW)

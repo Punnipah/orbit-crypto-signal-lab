@@ -3,6 +3,16 @@
 ชุดนี้พร้อมนำไปใช้กับ **Streamlit Community Cloud** โดยไม่ต้องมีคอมพิวเตอร์เปิดโปรแกรมตลอดเวลา
 แต่ต้องใช้บัญชี **GitHub** และ **Streamlit Community Cloud** ของคุณเองเพื่อเผยแพร่แอป
 
+## อัปเดตเว็บเดิมเป็น v2.5 (ไม่ว่าจะมาจาก v2.3 หรือ v2.4)
+
+1. ดาวน์โหลด ZIP v2.5 แล้วแตกไฟล์ในคอมพิวเตอร์ก่อน
+2. เปิด GitHub repository เดิมที่พรรณใช้ เช่น `Punnipah/orbit-crypto-signal-lab`
+3. อัปโหลดไฟล์ในโฟลเดอร์ `orbit_crypto_signal_lab` **ทับชื่อไฟล์เดิมที่ root ของ repository** โดยเฉพาะ `app.py`, ไฟล์ใหม่ `entry_planner.py` และโฟลเดอร์ `tests/`; คง `public_derivatives.py`, `coinglass_overlay.py`, `display_format.py`, `requirements.txt`, `README.md` และไฟล์อื่นใน ZIP ให้ครบ
+4. กด `Commit changes` แล้วรอ Streamlit Community Cloud ดึง commit ใหม่/รีสตาร์ตแอป
+5. รีเฟรชหน้าเว็บและดูบรรทัดใต้ชื่อแอปว่าขึ้น `v2.5`; ไม่ต้องสร้างแอปใหม่หรือเปลี่ยน Main file path (`app.py`)
+
+**ข้อควรระวัง:** GitHub `Add file → Upload files` ไม่สามารถเขียนทับไฟล์เดิมในทุกกรณีได้ด้วยการลากวางแบบเดียวกัน หากเว็บแจ้งชื่อไฟล์ซ้ำ/ไม่ยอมอัปโหลด ให้เปิดไฟล์นั้นใน GitHub → ไอคอนดินสอ `Edit` → วางเนื้อหาใหม่ → `Commit changes` ทีละไฟล์ หรือใช้ GitHub Desktop (ฟรี) เพื่อ commit โฟลเดอร์ทั้งหมดในครั้งเดียว อย่าลบ repository หรือ Streamlit app เดิมเพื่ออัปเดต
+
 ## A. เตรียมไฟล์บนคอมพิวเตอร์
 
 1. แตกไฟล์ ZIP ก่อน อย่าอัปโหลด ZIP ทั้งก้อนเข้า GitHub
@@ -17,7 +27,7 @@
 3. ตั้งชื่อ `orbit-crypto-signal-lab` เลือก `Private` ถ้าต้องการจำกัดผู้เข้าชม หรือ `Public` ถ้าตั้งใจเผยแพร่สาธารณะ แล้วกด `Create repository`
 4. ในหน้า repository เลือก `Add file` → `Upload files`
 5. **ลากเนื้อหาทั้งหมดของโฟลเดอร์ `orbit_crypto_signal_lab`** ลงไป โดยให้ `app.py` และ `requirements.txt` อยู่ที่ราก repository (ไม่อยู่ในโฟลเดอร์ซ้อน)
-6. ตรวจว่ามี `app.py`, `requirements.txt`, `binance_data.py`, `analysis_engine.py`, `research_engine.py`, `market_structure.py`, `backtest_engine.py`, `coinglass_overlay.py` ครบ
+6. ตรวจว่ามี `app.py`, `requirements.txt`, `binance_data.py`, `analysis_engine.py`, `research_engine.py`, `market_structure.py`, `backtest_engine.py`, `coinglass_overlay.py`, `public_derivatives.py`, `display_format.py`, `entry_planner.py` ครบ
 7. กด `Commit changes`
 
 > หมายเหตุ: อัปโหลดผ่านเว็บ GitHub บางกรณีโฟลเดอร์ `.streamlit` ที่ซ่อนอาจไม่ถูกเลือกหรืออัปโหลด ไม่เป็นไร แอปยังรันได้ด้วยค่าเริ่มต้นของ Streamlit; ธีมอาจต่างเล็กน้อย
@@ -41,8 +51,9 @@
 3. ค้นหา `BTC`, `ETH`, `SOL`, `DOGE` หรือคู่เหรียญอื่นในตลาด Spot ที่ Binance แสดง
 4. เลือกคู่เหรียญ, Timeframe, จำนวนแท่งประวัติ; มือถือแนะนำเริ่มที่ **1000–1500 แท่ง** เพื่อลดเวลารอ
 5. ในแท็บ `สัญญาณ` ดู Kraken/Binance/Bybit Futures Auto Signal ก่อน และกรอก CoinGlass เพิ่มเองเมื่ออยากใช้เป็นตัวกรองเสริม; สามารถวางเลข CoinGlass ทั้ง 5 ค่าในช่องเดียวได้
-6. ในแท็บ `Backtest` และ `Walk-forward` ดูผลเฉพาะกฎเทคนิค โดยตรวจจำนวนเทรดก่อนเชื่อถือผล
-7. iPhone: Safari → แชร์ → `Add to Home Screen` เพื่อมีไอคอนทางลัด; Android: Chrome → เมนู → `Add to Home screen` หากเบราว์เซอร์รองรับ
+6. เลื่อนลงไปที่หัวข้อ **🎯 Entry Zone · SL · TP1 · TP2** หลัง Final Signal ดูช่วงราคาและสถานะ `READY`/`WAIT`/`INVALID` รวมเวลาที่ควรตรวจแท่งถัดไปก่อนตัดสินใจ
+7. ในแท็บ `Backtest` และ `Walk-forward` ดูผลเฉพาะกฎเทคนิคเดิม โดยตรวจจำนวนเทรดก่อนเชื่อถือผล
+8. iPhone: Safari → แชร์ → `Add to Home Screen` เพื่อมีไอคอนทางลัด; Android: Chrome → เมนู → `Add to Home screen` หากเบราว์เซอร์รองรับ
 
 ## ข้อจำกัดที่ต้องเข้าใจ
 
@@ -52,7 +63,9 @@
 - ข้อมูล CoinGlass ที่กรอกอยู่ใน Streamlit session ของอุปกรณ์/เบราว์เซอร์ ไม่ซิงก์ข้ามเครื่อง และอาจหายเมื่อเซสชันสิ้นสุด อย่ากรอกข้อมูลส่วนตัวหรือรหัสผ่าน
 - CoinGlass ไม่เชื่อม API ฟรีอัตโนมัติ; หากต้องการตัวกรอง CoinGlass ต้องกรอก Funding / OI / Long-Short / Liquidations เองและยืนยัน หากกรอกแล้วไม่ผ่านจะทำให้ WAIT
 - Auto Futures ลอง Kraken ก่อน (ทดสอบสด BTC และ PEPE ผ่านแล้ว) หากไม่พร้อมจึงใช้ Binance/Bybit โดยใช้ข้อมูลตลาดเดียวต่อครั้ง ไม่ผสมกัน; HTTP 451/403 และเครือข่ายโฮสต์อาจทำให้เป็น WAIT
-- Backtest/Walk-forward **ไม่** ได้ทดสอบกฎ Binance/Bybit Futures หรือ CoinGlass ย้อนหลัง ผลทดสอบไม่ได้ยืนยันว่าเทรดทำกำไรจริง
+- Backtest/Walk-forward **ไม่** ได้ทดสอบ Entry Zone/SL/TP1–TP2 ใหม่, กฎ Futures หรือ CoinGlass ย้อนหลัง ผลทดสอบไม่ได้ยืนยันว่าแผนซื้อใหม่ทำกำไรจริง
+- `READY` เป็นเพียงการผ่านเกณฑ์ของแท่งที่ปิดแล้ว ต้องตรวจราคาที่ซื้อจริงและเงื่อนไขกระดาน; ไม่มีการแจ้งเตือน/ซื้อขายอัตโนมัติ
+- READY ยังต้องอาศัยราคา Spot ล่าสุดจาก Binance `ticker/price`; API นี้ไม่บอกเวลาของดีลล่าสุด จึงไม่ใช่คำรับรองว่าสามารถซื้อได้ที่ราคาเดียวกัน และหน้าเว็บไม่ได้อัปเดตเองทุกวินาที หากดึงไม่ได้จะเป็น `WAIT_LIVE_QUOTE`
 - ระบบไม่ส่งคำสั่งซื้อขาย ไม่เชื่อม Exchange Account หรือเก็บ API key
 - Binance public market API อาจถูกจำกัดตามภูมิภาคหรือเครือข่ายของโฮสต์ และอาจทำให้แอปโหลดข้อมูลไม่ได้
 

@@ -97,50 +97,62 @@ def confirm_signal(
     now = now or datetime.now(timezone.utc)
     if snapshot is None:
         return {"signal": "WAIT", "status": "MISSING", "reasons": [
-            "ยังไม่มีข้อมูล CoinGlass ที่ผู้ใช้ยืนยัน ระบบจึงไม่ออก BUY/SELL"], "confirmed": False}
+            "ยังไม่มีข้อมูล CoinGlass ที่ผู้ใช้ยืนยัน (ตัวกรองเสริม)"],
+            "blocking_reasons": [], "confirmed": False}
     problems = validate_snapshot(snapshot, expected_symbol, now, timedelta(hours=max_age_hours))
     if problems:
-        return {"signal": "WAIT", "status": "INVALID", "reasons": problems, "confirmed": False}
+        return {"signal": "WAIT", "status": "INVALID", "reasons": problems,
+                "blocking_reasons": problems, "confirmed": False}
     if technical_signal == "WAIT":
         return {"signal": "WAIT", "status": "TECHNICAL_WAIT", "reasons": [
-            "ข้อมูล CoinGlass ผ่านการตรวจสอบ แต่ฝั่งเทคนิคยังเป็น WAIT"], "confirmed": False}
+            "ข้อมูล CoinGlass ผ่านการตรวจสอบ แต่ฝั่งเทคนิคยังเป็น WAIT"],
+            "blocking_reasons": [], "confirmed": False}
 
     reasons: list[str] = []
-    caution = False
+    blocking_reasons: list[str] = []
     oi = snapshot.oi_change_24h_pct
     funding = snapshot.funding_rate_pct
     ratio = snapshot.long_short_account_ratio
 
     if technical_signal == "BUY":
         if price_change_24h_pct <= 0 or oi < 1:
-            caution = True
-            reasons.append("ราคา/OI ในรอบ 24 ชั่วโมงยังไม่ยืนยันแรงซื้อที่เพิ่มขึ้น")
+            blocking_reasons.append(
+                f"ราคา Spot 24h {price_change_24h_pct:+.2f}% ต้องเป็นบวก และ OI 24h {oi:+.2f}% ต้อง ≥ +1.00%")
+            reasons.append(blocking_reasons[-1])
         else:
             reasons.append("ราคาเพิ่มขึ้นพร้อม OI เพิ่มอย่างน้อย 1%: สนับสนุนแนวโน้มขาขึ้น")
-        if funding > 0.05 or ratio > 1.6:
-            caution = True
-            reasons.append("Funding สูงหรือ Long แออัด: เสี่ยงซื้อไล่ราคา")
-        elif funding < -0.05:
-            caution = True
-            reasons.append("Funding ติดลบมาก: ภาวะตลาดไม่ปกติ ควรตรวจเพิ่ม")
-        else:
+        if funding > 0.05:
+            blocking_reasons.append(f"Funding {funding:+.4f}% > +0.0500%: เสี่ยงซื้อไล่ราคา")
+            reasons.append(blocking_reasons[-1])
+        if funding < -0.05:
+            blocking_reasons.append(f"Funding {funding:+.4f}% < -0.0500%: ภาวะตลาดผิดปกติ")
+            reasons.append(blocking_reasons[-1])
+        if ratio > 1.6:
+            blocking_reasons.append(f"Long/Short Accounts {ratio:.3f} > 1.600: Long แออัด เสี่ยงซื้อไล่ราคา")
+            reasons.append(blocking_reasons[-1])
+        if not any((funding > 0.05, funding < -0.05, ratio > 1.6)):
             reasons.append("Funding และสัดส่วน Long/Short ยังไม่อยู่ในโซนแออัดเกินเกณฑ์")
     elif technical_signal == "SELL":
         if price_change_24h_pct >= 0 or oi < 1:
-            caution = True
-            reasons.append("ราคา/OI ในรอบ 24 ชั่วโมงยังไม่ยืนยันแรงขายที่เพิ่มขึ้น")
+            blocking_reasons.append(
+                f"ราคา Spot 24h {price_change_24h_pct:+.2f}% ต้องเป็นลบ และ OI 24h {oi:+.2f}% ต้อง ≥ +1.00%")
+            reasons.append(blocking_reasons[-1])
         else:
             reasons.append("ราคาลดลงพร้อม OI เพิ่มอย่างน้อย 1%: สนับสนุนแรงขาย")
-        if funding < -0.05 or ratio < 0.625:
-            caution = True
-            reasons.append("Short แออัด: เสี่ยงเด้งกลับจาก Short Squeeze")
-        elif funding > 0.05:
-            caution = True
-            reasons.append("Funding บวกสูงมาก: โครงสร้างตลาดไม่สมดุล")
-        else:
+        if funding < -0.05:
+            blocking_reasons.append(f"Funding {funding:+.4f}% < -0.0500%: Short แออัด")
+            reasons.append(blocking_reasons[-1])
+        if ratio < 0.625:
+            blocking_reasons.append(f"Long/Short Accounts {ratio:.3f} < 0.625: Short แออัด")
+            reasons.append(blocking_reasons[-1])
+        if funding > 0.05:
+            blocking_reasons.append(f"Funding {funding:+.4f}% > +0.0500%: โครงสร้างตลาดไม่สมดุล")
+            reasons.append(blocking_reasons[-1])
+        if not any((funding < -0.05, ratio < 0.625, funding > 0.05)):
             reasons.append("Funding และสัดส่วน Long/Short ยังไม่อยู่ในโซนแออัดเกินเกณฑ์")
     else:
-        return {"signal": "WAIT", "status": "INVALID", "reasons": ["สัญญาณเทคนิคไม่ถูกต้อง"], "confirmed": False}
+        return {"signal": "WAIT", "status": "INVALID", "reasons": ["สัญญาณเทคนิคไม่ถูกต้อง"],
+                "blocking_reasons": ["สัญญาณเทคนิคไม่ถูกต้อง"], "confirmed": False}
 
     long_liq = snapshot.long_liquidations_usd_24h
     short_liq = snapshot.short_liquidations_usd_24h
@@ -158,7 +170,9 @@ def confirm_signal(
 
     # Liquidation shares alone cannot prove continuation or reversal without
     # a denominator/market-size baseline. Hence they inform but never veto.
-    if caution:
+    if blocking_reasons:
         reasons.append("CoinGlass ยังไม่ยืนยันสัญญาณเทคนิค จึงปรับผลสุดท้ายเป็น WAIT")
-        return {"signal": "WAIT", "status": "CAUTION", "reasons": reasons, "confirmed": False}
-    return {"signal": technical_signal, "status": "CONFIRMED", "reasons": reasons, "confirmed": True}
+        return {"signal": "WAIT", "status": "CAUTION", "reasons": reasons,
+                "blocking_reasons": blocking_reasons, "confirmed": False}
+    return {"signal": technical_signal, "status": "CONFIRMED", "reasons": reasons,
+            "blocking_reasons": [], "confirmed": True}

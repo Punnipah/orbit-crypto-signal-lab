@@ -29,6 +29,7 @@ class PublicDerivativesTests(unittest.TestCase):
         self.assertAlmostEqual(value.funding_rate_pct, 0.01)
         self.assertAlmostEqual(value.oi_change_24h_pct, 24000 / 1001000 * 100)
         self.assertEqual(value.symbol, "BTCUSDT")
+        self.assertEqual(value.provider, "Binance")
         self.assertIn("single exchange", value.source)
 
     def test_missing_24h_history_fails(self):
@@ -77,6 +78,7 @@ class PublicDerivativesTests(unittest.TestCase):
         got = parse_bybit("BTCUSDT", ticker, oi, ratio, now=NOW)
         self.assertAlmostEqual(got.oi_change_24h_pct, (125 / 101 - 1) * 100)
         self.assertEqual(got.oi_notional_usdt, 2500000)
+        self.assertEqual(got.provider, "Bybit")
         self.assertIn("quantity", got.source)
 
     def test_fallback_returns_only_one_exchange(self):
@@ -100,6 +102,7 @@ class PublicDerivativesTests(unittest.TestCase):
         value = parse_kraken("BTCUSDT", "PF_XBTUSD", *self.kraken_fixture(), now=NOW)
         self.assertAlmostEqual(value.oi_change_24h_pct, (125 / 101 - 1) * 100)
         self.assertEqual(value.oi_unit, "contracts")
+        self.assertEqual(value.provider, "Kraken")
         self.assertEqual(value.funding_unit, "Kraken raw (not normalized)")
         # 0.87 is Kraken-native raw, not a Binance-compatible percent value.
         self.assertEqual(evaluate_derivatives("BUY", value, 3)["signal"], "BUY")

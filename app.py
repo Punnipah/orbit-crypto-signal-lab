@@ -12,17 +12,16 @@ import streamlit as st
 
 from backtest_engine import BacktestConfig, simulate, walk_forward
 from binance_data import (HIGHER_TIMEFRAME, POPULAR_QUOTES, PublicDataError,
-                          TIMEFRAMES, count_time_gaps, fetch_catalog, fetch_klines, search_catalog)
+                          TIMEFRAMES, count_time_gaps, fetch_catalog, fetch_klines,
+                          fetch_spot_last_price, search_catalog)
 from coinglass_overlay import CoinGlassSnapshot, confirm_signal, parse_quick_paste
+from display_format import format_price, format_signed_price
+from entry_planner import EntryPlan, plan_entry
 from public_derivatives import DerivativesDataError, evaluate_derivatives, fetch_with_fallback
 from research_engine import latest_reasons, prepare_features, with_signal
 
 
 BKK = ZoneInfo("Asia/Bangkok")
-
-
-def money(value: float) -> str:
-    return f"{value:,.5f}" if value < 10 else f"{value:,.2f}"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -35,12 +34,17 @@ def get_candles(symbol: str, tf: str, n: int):
     return fetch_klines(symbol, tf, n)
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def get_spot_quote(symbol: str):
+    return fetch_spot_last_price(symbol)
+
+
 @st.cache_data(ttl=180, show_spinner=False)
 def get_derivatives(symbol: str):
     return fetch_with_fallback(symbol)
 
 
-def plot_prices(f: pd.DataFrame, symbol: str, timeframe: str):
+def plot_prices(f: pd.DataFrame, symbol: str, timeframe: str, plan: EntryPlan | None = None):
     recent = f.tail(180)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         row_heights=[0.77, 0.23], vertical_spacing=0.035)
@@ -55,6 +59,10 @@ def plot_prices(f: pd.DataFrame, symbol: str, timeframe: str):
         if pd.notna(last[key]):
             fig.add_hline(y=float(last[key]), line_width=1, line_dash="dot", line_color=color,
                           annotation_text=label, row=1, col=1)
+    if plan is not None and plan.entry_low is not None and plan.entry_high is not None:
+        fig.add_hrect(y0=plan.entry_low, y1=plan.entry_high, fillcolor="rgba(16,185,129,0.15)",
+                      line_width=1, line_color="#10b981", row=1, col=1,
+                      annotation_text="Entry Zone (ทดลอง)", annotation_position="top left")
     colors = ["#22c55e" if c >= o else "#ef4444" for c, o in zip(recent["close"], recent["open"])]
     fig.add_trace(go.Bar(x=recent.index, y=recent["volume"], marker_color=colors,
                          opacity=0.65, name="Volume"), row=2, col=1)
@@ -73,6 +81,7 @@ def coin_glass_panel(base_asset: str):
         st.markdown(f"อ่านข้อมูลจาก [CoinGlass](https://www.coinglass.com/) สำหรับเหรียญ **{base_asset}** แล้วกรอกข้อมูลล่าสุด")
         st.caption("Funding ใช้หน่วยเปอร์เซ็นต์ เช่น 0.01 = 0.01% · OI และ Liquidations ให้ใช้กรอบ 24 ชั่วโมง")
         st.caption("📱 กรอกเร็ว: วางตัวเลข 5 ค่าในช่องเดียวตามลำดับ Funding%, OI 24h%, L/S Ratio, Long Liq USD, Short Liq USD (คั่นด้วยคอมมา)")
+        st.caption("⚠️ ถ้าค่ามาจากต่างตลาด (เช่น L/S ของ OKX แต่ OI รวมทุกกระดาน) ให้ใช้เพื่อประกอบการวิเคราะห์เท่านั้น เพราะชุดข้อมูลไม่ตรงขอบเขตกัน")
         pasted = st.text_area("วางตัวเลข CoinGlass 5 ค่า (ไม่บังคับ)",
                               placeholder="0.01, 2.50, 1.10, 120000, 90000", height=80,
                               help="เป็นเพียงตัวอย่างรูปแบบ ห้ามใช้เลขตัวอย่างเป็นข้อมูลตลาดจริง")
@@ -139,7 +148,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🪐 Orbit Crypto Signal Lab")
-st.caption("v2.3 · Binance Spot + Kraken/Binance/Bybit Futures public · CoinGlass เสริม · ไม่ส่งออเดอร์ · ไม่มี API Key")
+st.caption("v2.5 · Binance Spot + Kraken/Binance/Bybit Futures public · Entry Zone/SL/TP · CoinGlass เสริม · ไม่ส่งออเดอร์ · ไม่มี API Key")
 st.info("📱 มือถือ: แตะเมนู **>** มุมซ้ายบนเพื่อค้นหาเหรียญ/ตั้งค่าความเสี่ยง แล้วปิดเมนูเพื่อดูกราฟ · ข้อมูล CoinGlass ที่กรอกจะอยู่เฉพาะในเซสชันนี้")
 
 with st.sidebar:
@@ -177,6 +186,7 @@ with st.sidebar:
     if st.button("🔄 ดึงข้อมูลใหม่", width="stretch"):
         get_catalog.clear()
         get_candles.clear()
+        get_spot_quote.clear()
         get_derivatives.clear()
         st.rerun()
 
@@ -226,7 +236,7 @@ with tabs[0]:
     else:
         f_cols = st.columns(2)
         f_cols[0].metric("Funding ล่าสุด" + (" (%)" if derivatives.funding_unit == "percent" else " (raw)"),
-                         f"{derivatives.funding_rate_pct:+.4f}" + ("%" if derivatives.funding_unit == "percent" else ""))
+                         format_signed_price(derivatives.funding_rate_pct) + ("%" if derivatives.funding_unit == "percent" else ""))
         f_cols[1].metric("OI เปลี่ยน 24 ชม.", f"{derivatives.oi_change_24h_pct:+.2f}%")
         f_cols[0].metric("Long/Short Accounts", f"{derivatives.long_short_account_ratio:.3f}")
         f_cols[1].metric(f"OI ล่าสุด ({derivatives.oi_unit})", f"{derivatives.oi_notional_usdt:,.0f}")
@@ -246,13 +256,80 @@ with tabs[0]:
     if price_stale:
         final_signal = "WAIT"
     colors = {"BUY": "🟢", "SELL": "🔴", "WAIT": "🟡"}
+    futures_provider = f"{derivatives.provider} Futures" if derivatives is not None else "Public Futures"
     st.subheader(f"{colors[final_signal]} Final Signal: {final_signal}")
-    st.caption(f"Technical: {raw} · Binance Futures: {auto['status']} · CoinGlass: {cg['status'] if snapshot else 'ไม่ได้กรอก (เสริม)'}")
+    st.caption(f"Technical: {raw} · {futures_provider}: {auto['status']} · CoinGlass: {cg['status'] if snapshot else 'ไม่ได้กรอก (เสริม)'}")
+    if snapshot is not None and cg["blocking_reasons"]:
+        st.warning("CoinGlass ไม่ผ่านเกณฑ์ จึงคง Final Signal เป็น WAIT (เกณฑ์ป้องกันความเสี่ยงเชิงทดลอง)")
+        for blocker in cg["blocking_reasons"]:
+            st.write("⚠️ " + blocker)
+    if auto["signal"] == "WAIT" and raw != "WAIT":
+        st.info("Auto Futures ไม่ผ่าน: " + "; ".join(auto["reasons"]))
     if final_signal != "WAIT":
         st.warning("สัญญาณนี้อาศัย Spot + Futures จากแหล่งที่ระบุ หากไม่มี CoinGlass จะยังไม่ใช่สัญญาณที่ CoinGlass ยืนยัน และยังไม่มีสถิติทดสอบกฎอนุพันธ์ร่วม")
     # Two metrics per row are legible on narrow mobile viewports.
     last = analyzed.iloc[-1]
-    metrics = [("ราคาปิด", money(float(last["close"]))),
+    spot_quote = None
+    spot_quote_time = None
+    try:
+        spot_quote, spot_quote_time = get_spot_quote(symbol)
+    except PublicDataError as exc:
+        st.caption(f"ราคา Spot ล่าสุดไม่พร้อม: {exc} — จะไม่แสดงสถานะ READY")
+    entry_plan = plan_entry(
+        last, timeframe, final_signal, last_closed_at.to_pydatetime(),
+        capital=capital, risk_pct=risk_pct, max_allocation_pct=allocation,
+        fee_pct=fee_pct, slippage_pct=slip_pct,
+        data_ok=not (bool(gaps) or price_stale),
+        current_price=spot_quote,
+    )
+    st.subheader("🎯 Entry Zone · SL · TP1 · TP2 (Spot Long)")
+    status_text = {
+        "READY": "🟢 เงื่อนไขซื้อผ่านบนแท่งที่ปิดแล้ว (ตรวจราคาจริงอีกครั้ง)",
+        "WAIT_RETEST": "🟡 WAIT FOR ENTRY — รอราคาย่อลงเข้าโซน",
+        "WAIT_RECLAIM": "🟡 WAIT — รอราคากลับเข้าโซน",
+        "WAIT_CONFIRMATION": "🟡 WAIT — อยู่ในโซนแต่ยังไม่ผ่านตัวกรอง",
+        "WAIT_LIVE_QUOTE": "🟡 WAIT — ไม่มีราคา Spot ล่าสุดที่ตรวจสอบได้",
+        "INVALID": "🔴 SETUP INVALID — ยังไม่ควรสร้างแผนซื้อ",
+        "NO_SETUP": "⚪ NO VALID SETUP — ยังไม่มีโซนเข้าซื้อที่เชื่อถือได้",
+    }
+    st.markdown("**" + status_text[entry_plan.status] + "**")
+    st.write(entry_plan.reason)
+    if spot_quote is not None:
+        st.caption(
+            f"ราคา Spot ล่าสุดที่ร้องขอจาก Binance: {format_price(spot_quote)} {selected['quote']} "
+            f"· ขอข้อมูลเมื่อ {spot_quote_time.astimezone(BKK):%d/%m %H:%M:%S} น. "
+            "(แหล่งนี้ไม่ระบุเวลาเทรดล่าสุด; ไม่ใช่ราคาเสนอซื้อ/ขายจริงและไม่ได้อัปเดตเองทุกวินาที)"
+        )
+    if entry_plan.entry_low is not None:
+        st.markdown(
+            f"**ช่วงเฝ้ารอเข้าซื้อ ({selected['quote']}):** "
+            f"`{format_price(entry_plan.entry_low)}` – `{format_price(entry_plan.entry_high)}`"
+        )
+        cols = st.columns(2)
+        cols[0].metric("Stop Loss", format_price(entry_plan.stop_loss))
+        cols[1].metric("Take Profit 1 (1.5R)", format_price(entry_plan.take_profit_1))
+        cols = st.columns(2)
+        cols[0].metric("Take Profit 2 (2.5R)", format_price(entry_plan.take_profit_2))
+        cols[1].metric("ขนาดสถานะ (เหรียญ)", format_price(entry_plan.position_qty))
+        st.caption(f"อ้างอิง: {entry_plan.anchor_name} {format_price(entry_plan.anchor_price)} {selected['quote']} · โซนกว้าง ±0.30 ATR")
+        st.caption(
+            f"เงื่อนไขเข้า: ต้องมีแท่ง {timeframe} ปิดใน Entry Zone เหนือแนวรับอ้างอิงเป็นแท่งเขียว "
+            "มี Volume ≥ 0.75×, Final BUY และราคา Spot ที่ร้องขอล่าสุดอยู่ในโซน; ตรวจคำเสนอขายจริง ณ เวลาจะซื้ออีกครั้ง"
+        )
+        st.caption(
+            f"แท่งอ้างอิงปิด {entry_plan.last_closed_at.astimezone(BKK):%d/%m/%Y %H:%M} น. · "
+            f"ตรวจแท่งถัดไป {entry_plan.next_check_at.astimezone(BKK):%d/%m %H:%M} น. · "
+            f"แผนเดิมหมดอายุ {entry_plan.expires_at.astimezone(BKK):%d/%m %H:%M} น. (เวลาไทย; รีเฟรชจะคำนวณใหม่)"
+        )
+        st.caption(
+            f"ความเสี่ยงจำลองไม่เกิน {entry_plan.risk_budget:,.2f} {selected['quote']} "
+            f"· ความเสี่ยงคำนวณ {entry_plan.estimated_risk:,.2f} {selected['quote']} "
+            f"· มูลค่าซื้อสูงสุดเชิงตัวอย่าง {entry_plan.notional:,.2f} {selected['quote']} "
+            "(ใช้ราคาขอบบนของโซนและรวม fee/slippage ตามที่ตั้ง; ไม่รวมช่องว่างราคาหรือสภาพคล่องจริง)"
+        )
+    st.info("Entry Zone เป็นแผนเฝ้ารอจากข้อมูลแท่งที่ปิดแล้ว ไม่ใช่คำสั่งซื้อ; เมื่อ Final Signal = WAIT/SELL ห้ามตีความโซนเป็น BUY ที่ยืนยันแล้ว · กฎนี้ยังไม่ผ่าน Backtest/Walk-forward รวม")
+    st.divider()
+    metrics = [("ราคาปิด", format_price(float(last["close"]))),
                ("Technical Score", f"{int(last['score']):+d}/{7 if timeframe == '1d' else 9}"),
                ("RSI", f"{float(last['rsi']):.1f}"),
                ("ADX", f"{float(last['adx']):.1f}"),
@@ -261,7 +338,7 @@ with tabs[0]:
         cols = st.columns(2)
         for col, (name, value) in zip(cols, metrics[offset:offset + 2]):
             col.metric(name, value)
-    st.plotly_chart(plot_prices(analyzed, symbol, timeframe), width="stretch")
+    st.plotly_chart(plot_prices(analyzed, symbol, timeframe, entry_plan), width="stretch")
     left, right = st.columns([1.2, 1])
     with left:
         st.subheader("หลักฐานจากกราฟ")
@@ -273,18 +350,10 @@ with tabs[0]:
         st.caption("CoinGlass เป็นตัวกรองเสริม: เมื่อกรอกแล้วไม่ผ่านหรือข้อมูลไม่ถูกต้องจะเปลี่ยนผลเป็น WAIT; หากไม่กรอกจะใช้ผลจาก Futures สาธารณะเท่านั้น")
     with right:
         st.subheader("Market Structure & Risk")
-        st.write("Pivot High:", money(float(last["pivot_high"])) if pd.notna(last["pivot_high"]) else "ไม่พร้อม")
-        st.write("Pivot Low:", money(float(last["pivot_low"])) if pd.notna(last["pivot_low"]) else "ไม่พร้อม")
-        st.write("ATR(14):", money(float(last["atr"])))
-        if final_signal == "BUY":
-            entry = float(last["close"])
-            stop = max(0, min(entry - 1.5 * float(last["atr"]), float(last["support50"]) - 0.2 * float(last["atr"])))
-            distance = entry - stop
-            planned_qty = min(capital * risk_pct / 100 / distance, capital * allocation / 100 / entry) if distance > 0 else 0
-            st.success(f"ราคาอ้างอิง {money(entry)} · SL {money(stop)} · TP(2R) {money(entry + 2 * distance)}")
-            st.write(f"ขนาดสถานะเชิงตัวอย่าง: {planned_qty:.6f} {selected['base']} (ก่อนค่าธรรมเนียม)")
-        else:
-            st.info("แสดงแผนเข้าซื้อเมื่อ BUY ผ่านตัวกรองที่เปิดใช้อยู่เท่านั้น · SELL สำหรับ Spot คือขาย/ลดเหรียญที่ถือ")
+        st.write("Pivot High:", format_price(float(last["pivot_high"])) if pd.notna(last["pivot_high"]) else "ไม่พร้อม")
+        st.write("Pivot Low:", format_price(float(last["pivot_low"])) if pd.notna(last["pivot_low"]) else "ไม่พร้อม")
+        st.write("ATR(14):", format_price(float(last["atr"])))
+        st.caption("แผน Entry Zone/SL/TP อยู่ด้านบน และจะเปลี่ยนตามราคา/Timeframe ที่เลือก; SELL สำหรับ Spot หมายถึงขาย/ลดเหรียญที่ถือ ไม่ใช่เปิด Short")
     st.warning("โปรแกรมนี้ไม่ส่งคำสั่งซื้อขาย และไม่รับประกันกำไร ราคาในกระดานที่ผู้ใช้เทรดจริงอาจต่างจากแหล่งข้อมูล")
 
 with tabs[1]:
@@ -337,13 +406,15 @@ with tabs[3]:
     ### วิธีใช้
     1. เลือกสกุลราคา แล้วพิมพ์รหัสเหรียญ (เช่น `BTC` หรือ `XRP`) ในแถบซ้าย
     2. เลือกคู่เหรียญและ Timeframe จากนั้นรอสักครู่ให้ระบบคำนวณข้อมูลราคา
-    3. อ่าน **Technical Signal** จาก Spot, **Auto Signal** จาก Binance Futures และ **Final Signal** ที่รวมตัวกรองเสริม
+    3. อ่าน **Technical Signal** จาก Spot, **Auto Signal** จาก Kraken/Binance/Bybit Futures (ชื่อผู้ให้ข้อมูลจะแสดงตามจริง) และ **Final Signal** ที่รวมตัวกรองเสริม
     4. เปิดแท็บ **Backtest** และ **Walk-forward** เพื่อตรวจสถิติย้อนหลัง (เฉพาะกลยุทธ์เทคนิค)
     5. CoinGlass เป็นข้อมูลเสริมแบบกรอกเอง; ถ้าไม่กรอกจะใช้ผล Futures แต่หากกรอกแล้วมีข้อเตือน/หมดอายุ จะเป็น `WAIT`
+    6. อ่าน **Entry Zone / SL / TP1 / TP2** ใต้ Final Signal: ถ้ายังเป็น WAIT ให้เฝ้ารอ ไม่ใช่คำสั่งซื้อ; ติดตามเวลาปิดแท่งและหมดอายุของแผน
 
     ### ข้อจำกัดสำคัญ
     - CoinGlass API ทางการเป็นบริการที่ใช้ API Key และแพ็กเกจชำระเงิน ณ วันที่ตรวจสอบ ดังนั้นโหมดฟรีต้องกรอกค่าด้วยมือ
-    - ผล Backtest/Walk-forward **ไม่ได้รวม Binance Futures หรือ CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวมแล้ว
+    - ผล Backtest/Walk-forward **ไม่ได้รวม Kraken/Binance/Bybit Futures หรือ CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวมแล้ว
+    - **Entry Zone, SL และ TP ของ v2.5 ยังไม่ได้ Backtest/Walk-forward แบบครบกฎ**; เป็น heuristic เฝ้ารอเท่านั้น อาจคลาดเคลื่อนหรือไม่เกิดโซนที่ใช้ได้ในบางตลาด
     - ข้อมูลอนุพันธ์มาจาก Kraken Perpetual USD, Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะเหรียญที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
     - ไม่ได้รับข้อมูล Liquidations 24h ครบจาก Public API ที่ใช้ จึงไม่ใช้ใน Auto Signal
     - ข้อมูลจาก Binance Spot อาจไม่ตรงกับตลาดที่ผู้ใช้ซื้อขายจริง รวมถึงอาจถูกจำกัดการเข้าถึงบางเครือข่าย/ภูมิภาค

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import time
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -51,6 +53,26 @@ def search_catalog(catalog: list[dict], query: str, quote: str = "USDT") -> list
     matches = [entry for entry in catalog if (quote == "ทั้งหมด" or entry["quote"] == quote)
                and (not q or q in entry["symbol"] or q in entry["base"])]
     return matches
+
+
+def fetch_spot_last_price(symbol: str) -> tuple[float, datetime]:
+    """Fetch public last-traded Spot price, with request time (not trade time).
+
+    Binance's symbol-price ticker provides no trade timestamp. A successful
+    response cannot prove liquidity or that the underlying trade is recent.
+    """
+    if not symbol.isascii() or not symbol.isalnum() or len(symbol) > 24:
+        raise PublicDataError("คู่เหรียญไม่ถูกต้อง")
+    response = _get_json("/ticker/price", {"symbol": symbol})
+    if not isinstance(response, dict) or response.get("symbol") != symbol:
+        raise PublicDataError("ราคา Spot ล่าสุดไม่ตรงคู่เหรียญ")
+    try:
+        price = float(response["price"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PublicDataError("ราคา Spot ล่าสุดไม่ใช่ตัวเลข") from exc
+    if not math.isfinite(price) or price <= 0:
+        raise PublicDataError("ราคา Spot ล่าสุดผิดปกติ")
+    return price, datetime.now(timezone.utc)
 
 
 def parse_klines(rows: list) -> pd.DataFrame:

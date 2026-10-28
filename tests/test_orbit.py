@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
 from backtest_engine import BacktestConfig, simulate, walk_forward
-from binance_data import count_time_gaps, parse_klines, search_catalog
+from binance_data import PublicDataError, count_time_gaps, fetch_spot_last_price, parse_klines, search_catalog
 from market_structure import structure_features
 from research_engine import prepare_features, with_signal
 
@@ -34,6 +35,16 @@ class TestDataAndStructure(unittest.TestCase):
         self.assertEqual(len(df), 300)
         self.assertEqual(float(df["close"].iloc[-1]), 103)
         self.assertEqual(count_time_gaps(df, "15m"), 299)
+
+    def test_public_spot_quote_is_validated_and_read_only(self):
+        with patch("binance_data._get_json", return_value={"symbol": "PEPEUSDT", "price": "0.0000048463"}) as getter:
+            price, requested_at = fetch_spot_last_price("PEPEUSDT")
+        self.assertAlmostEqual(price, 0.0000048463)
+        self.assertIsNotNone(requested_at.tzinfo)
+        getter.assert_called_once_with("/ticker/price", {"symbol": "PEPEUSDT"})
+        with patch("binance_data._get_json", return_value={"symbol": "BTCUSDT", "price": "42"}):
+            with self.assertRaises(PublicDataError):
+                fetch_spot_last_price("PEPEUSDT")
 
     def test_structure_never_rewrites_past_when_future_added(self):
         f = candles(500)

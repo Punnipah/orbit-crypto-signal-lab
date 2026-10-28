@@ -1,7 +1,7 @@
-"""Read-only Binance USD-M Futures snapshot, separate from CoinGlass.
+"""Read-only Kraken, Binance, and Bybit Futures snapshots, separate from CoinGlass.
 
-No order endpoints, account data, credentials, or web scraping. The OI value
-is Binance USDT-M contract notional, NOT multi-exchange aggregated OI.
+No order endpoints, account data, credentials, or web scraping. Each snapshot
+belongs to exactly one exchange; OI values/units are provider-specific.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ class DerivativesSnapshot:
     source: str = "Binance USDⓈ-M Futures (single exchange)"
     oi_unit: str = "USDT"
     funding_unit: str = "percent"
+    provider: str = "Binance"
 
 
 def _request(path: str, params: dict) -> dict | list:
@@ -198,7 +199,8 @@ def parse_bybit(symbol: str, ticker_payload: dict, oi_payload: dict, ratio_paylo
             oi_change_24h_pct=(current_qty / old_qty - 1) * 100,
             long_short_account_ratio=ratio, oi_notional_usdt=notional,
             funding_at=observed, oi_at=oi_at, ratio_at=ratio_at,
-            source="Bybit USDT Linear Futures (single exchange; OI 24h based on quantity)")
+            source="Bybit USDT Linear Futures (single exchange; OI 24h based on quantity)",
+            provider="Bybit")
     except (KeyError, IndexError, TypeError, OverflowError, ValueError) as exc:
         raise DerivativesDataError("รูปแบบข้อมูล Bybit ไม่ครบหรือเปลี่ยนแปลง") from exc
 
@@ -262,7 +264,8 @@ def parse_kraken(symbol: str, instrument: str, tickers: dict, oi: dict, ratios: 
             long_short_account_ratio=ratio, oi_notional_usdt=latest_oi,
             funding_at=observed, oi_at=oi_at, ratio_at=ratio_at,
             source=f"Kraken Futures {instrument} (single exchange)",
-            oi_unit="contracts", funding_unit="Kraken raw (not normalized)")
+            oi_unit="contracts", funding_unit="Kraken raw (not normalized)",
+            provider="Kraken")
     except (KeyError, IndexError, TypeError, ValueError, OverflowError) as exc:
         raise DerivativesDataError("รูปแบบข้อมูล Kraken ไม่ครบหรือเปลี่ยนแปลง") from exc
 
