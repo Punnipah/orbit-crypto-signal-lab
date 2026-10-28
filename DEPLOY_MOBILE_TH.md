@@ -3,13 +3,13 @@
 ชุดนี้พร้อมนำไปใช้กับ **Streamlit Community Cloud** โดยไม่ต้องมีคอมพิวเตอร์เปิดโปรแกรมตลอดเวลา
 แต่ต้องใช้บัญชี **GitHub** และ **Streamlit Community Cloud** ของคุณเองเพื่อเผยแพร่แอป
 
-## อัปเดตเว็บเดิมเป็น v2.5 (ไม่ว่าจะมาจาก v2.3 หรือ v2.4)
+## อัปเดตเว็บเดิมเป็น v2.6.1 (Single MTF)
 
-1. ดาวน์โหลด ZIP v2.5 แล้วแตกไฟล์ในคอมพิวเตอร์ก่อน
+1. ดาวน์โหลด ZIP v2.6.1 แล้วแตกไฟล์ในคอมพิวเตอร์ก่อน
 2. เปิด GitHub repository เดิมที่พรรณใช้ เช่น `Punnipah/orbit-crypto-signal-lab`
-3. อัปโหลดไฟล์ในโฟลเดอร์ `orbit_crypto_signal_lab` **ทับชื่อไฟล์เดิมที่ root ของ repository** โดยเฉพาะ `app.py`, ไฟล์ใหม่ `entry_planner.py` และโฟลเดอร์ `tests/`; คง `public_derivatives.py`, `coinglass_overlay.py`, `display_format.py`, `requirements.txt`, `README.md` และไฟล์อื่นใน ZIP ให้ครบ
+3. อัปโหลดไฟล์ในโฟลเดอร์ `orbit_crypto_signal_lab` **ทับชื่อไฟล์เดิมที่ root ของ repository** โดยเฉพาะ **`app.py`, `multi_timeframe.py` และไฟล์ใหม่ `confluence.py`**, รวมทั้ง `tests/test_confluence.py`; คง `entry_planner.py`, `public_derivatives.py`, `coinglass_overlay.py`, `display_format.py`, `requirements.txt`, `README.md` และไฟล์อื่นใน ZIP ให้ครบ
 4. กด `Commit changes` แล้วรอ Streamlit Community Cloud ดึง commit ใหม่/รีสตาร์ตแอป
-5. รีเฟรชหน้าเว็บและดูบรรทัดใต้ชื่อแอปว่าขึ้น `v2.5`; ไม่ต้องสร้างแอปใหม่หรือเปลี่ยน Main file path (`app.py`)
+5. รีเฟรชหน้าเว็บและดูบรรทัดใต้ชื่อแอปว่าขึ้น `v2.6.1`; จากนั้นเปิดแท็บ **🎯 สัญญาณ MTF รวม** ไม่ต้องสร้างแอปใหม่หรือเปลี่ยน Main file path (`app.py`)
 
 **ข้อควรระวัง:** GitHub `Add file → Upload files` ไม่สามารถเขียนทับไฟล์เดิมในทุกกรณีได้ด้วยการลากวางแบบเดียวกัน หากเว็บแจ้งชื่อไฟล์ซ้ำ/ไม่ยอมอัปโหลด ให้เปิดไฟล์นั้นใน GitHub → ไอคอนดินสอ `Edit` → วางเนื้อหาใหม่ → `Commit changes` ทีละไฟล์ หรือใช้ GitHub Desktop (ฟรี) เพื่อ commit โฟลเดอร์ทั้งหมดในครั้งเดียว อย่าลบ repository หรือ Streamlit app เดิมเพื่ออัปเดต
 
@@ -27,7 +27,7 @@
 3. ตั้งชื่อ `orbit-crypto-signal-lab` เลือก `Private` ถ้าต้องการจำกัดผู้เข้าชม หรือ `Public` ถ้าตั้งใจเผยแพร่สาธารณะ แล้วกด `Create repository`
 4. ในหน้า repository เลือก `Add file` → `Upload files`
 5. **ลากเนื้อหาทั้งหมดของโฟลเดอร์ `orbit_crypto_signal_lab`** ลงไป โดยให้ `app.py` และ `requirements.txt` อยู่ที่ราก repository (ไม่อยู่ในโฟลเดอร์ซ้อน)
-6. ตรวจว่ามี `app.py`, `requirements.txt`, `binance_data.py`, `analysis_engine.py`, `research_engine.py`, `market_structure.py`, `backtest_engine.py`, `coinglass_overlay.py`, `public_derivatives.py`, `display_format.py`, `entry_planner.py` ครบ
+6. ตรวจว่ามี `app.py`, `requirements.txt`, `binance_data.py`, `analysis_engine.py`, `research_engine.py`, `market_structure.py`, `backtest_engine.py`, `coinglass_overlay.py`, `public_derivatives.py`, `display_format.py`, `entry_planner.py`, **`multi_timeframe.py` และ `confluence.py`** ครบ
 7. กด `Commit changes`
 
 > หมายเหตุ: อัปโหลดผ่านเว็บ GitHub บางกรณีโฟลเดอร์ `.streamlit` ที่ซ่อนอาจไม่ถูกเลือกหรืออัปโหลด ไม่เป็นไร แอปยังรันได้ด้วยค่าเริ่มต้นของ Streamlit; ธีมอาจต่างเล็กน้อย
@@ -49,11 +49,12 @@
 1. เปิด URL ที่ได้รับบน Safari หรือ Chrome ได้จากทุกเครือข่ายที่เข้าถึงเว็บได้
 2. แตะลูกศรเมนูซ้ายบนเพื่อเปิดแถบ `ค้นหาเหรียญ`
 3. ค้นหา `BTC`, `ETH`, `SOL`, `DOGE` หรือคู่เหรียญอื่นในตลาด Spot ที่ Binance แสดง
-4. เลือกคู่เหรียญ, Timeframe, จำนวนแท่งประวัติ; มือถือแนะนำเริ่มที่ **1000–1500 แท่ง** เพื่อลดเวลารอ
-5. ในแท็บ `สัญญาณ` ดู Kraken/Binance/Bybit Futures Auto Signal ก่อน และกรอก CoinGlass เพิ่มเองเมื่ออยากใช้เป็นตัวกรองเสริม; สามารถวางเลข CoinGlass ทั้ง 5 ค่าในช่องเดียวได้
-6. เลื่อนลงไปที่หัวข้อ **🎯 Entry Zone · SL · TP1 · TP2** หลัง Final Signal ดูช่วงราคาและสถานะ `READY`/`WAIT`/`INVALID` รวมเวลาที่ควรตรวจแท่งถัดไปก่อนตัดสินใจ
-7. ในแท็บ `Backtest` และ `Walk-forward` ดูผลเฉพาะกฎเทคนิคเดิม โดยตรวจจำนวนเทรดก่อนเชื่อถือผล
-8. iPhone: Safari → แชร์ → `Add to Home Screen` เพื่อมีไอคอนทางลัด; Android: Chrome → เมนู → `Add to Home screen` หากเบราว์เซอร์รองรับ
+4. เลือกคู่เหรียญ และจำนวนแท่งประวัติ; มือถือแนะนำเริ่มที่ **1000–1500 แท่ง** เพราะหน้ารวมต้องเรียกข้อมูลทั้ง 4 ช่วงเวลา
+5. เปิดแท็บเริ่มต้น **🎯 สัญญาณ MTF รวม** โปรแกรมวิเคราะห์ 15m, 1h, 4h, 1d อัตโนมัติหลังเลือกเหรียญ แล้วแสดง **สัญญาณรวมหนึ่งค่า** และ **Entry Zone/SL/TP ชุดเดียว** ไม่ต้องเลือก Timeframe ทีละกรอบ
+6. ในแท็บ **📊 สัญญาณละเอียด** ดูกราฟและแหล่ง Kraken/Binance/Bybit Futures แล้วกรอก CoinGlass เป็นตัวกรองเสริม; วางเลข CoinGlass 5 ค่าในช่องเดียวได้ เมื่อบันทึกแล้วกลับมาดูผล MTF รวม
+7. หากขึ้น `MTF BUY BIAS · WAIT FOR ENTRY` หมายถึง **ทิศทางสนับสนุน แต่ยังไม่ถึงเงื่อนไขซื้อ**; กด **ทำไม MTF ยังรอ?** เพื่อดูเหตุผลและเวลาแท่งถัดไป
+8. ในแท็บ `Backtest` และ `Walk-forward` ดูผลเฉพาะกฎเทคนิคเดิม โดยตรวจจำนวนเทรดก่อนเชื่อถือผล
+9. iPhone: Safari → แชร์ → `Add to Home Screen` เพื่อมีไอคอนทางลัด; Android: Chrome → เมนู → `Add to Home screen` หากเบราว์เซอร์รองรับ
 
 ## ข้อจำกัดที่ต้องเข้าใจ
 
@@ -68,12 +69,15 @@
 - READY ยังต้องอาศัยราคา Spot ล่าสุดจาก Binance `ticker/price`; API นี้ไม่บอกเวลาของดีลล่าสุด จึงไม่ใช่คำรับรองว่าสามารถซื้อได้ที่ราคาเดียวกัน และหน้าเว็บไม่ได้อัปเดตเองทุกวินาที หากดึงไม่ได้จะเป็น `WAIT_LIVE_QUOTE`
 - ระบบไม่ส่งคำสั่งซื้อขาย ไม่เชื่อม Exchange Account หรือเก็บ API key
 - Binance public market API อาจถูกจำกัดตามภูมิภาคหรือเครือข่ายของโฮสต์ และอาจทำให้แอปโหลดข้อมูลไม่ได้
+- Single MTF ใช้การเรียกแท่งเทียนทั้ง 4 กรอบมากกว่ารุ่นก่อน อาจใช้เวลารอเพิ่ม; หากบางกรอบล้มเหลว ระบบจะแสดง `WAIT` ไม่สร้างสัญญาณรวมหรือคะแนนแทนข้อมูลที่ขาด
 
 ## แก้ปัญหาที่พบบ่อย
 
 | อาการ | วิธีตรวจ |
 |---|---|
 | `ModuleNotFoundError` | `requirements.txt` ต้องอยู่ใน repo และ `app.py` ต้องอยู่ระดับเดียวกับโมดูล Python |
+| `No module named 'multi_timeframe'` | v2.6.1 ต้องอัปโหลด `multi_timeframe.py` ไปที่ root ของ repo ระดับเดียวกับ `app.py` แล้วรีสตาร์ตแอป |
+| `No module named 'confluence'` | v2.6.1 ต้องอัปโหลดไฟล์ใหม่ `confluence.py` ไปที่ root ของ repo ระดับเดียวกับ `app.py` แล้วรีสตาร์ตแอป |
 | `File not found: app.py` | ตรวจ Main file path และโครงสร้าง repo (อย่าใส่ชื่อโฟลเดอร์เพิ่มถ้าไฟล์อยู่ root) |
 | ไม่เจอเหรียญ | เปลี่ยนสกุลราคาเป็น `ทั้งหมด` หรือค้นรหัส เช่น `ETH` |
 | Binance API ใช้ไม่ได้ | ดูข้อความ error; ถ้าโฮสต์ถูกจำกัด API ให้รอ/ลองใหม่ โดยไม่พยายามเลี่ยงข้อจำกัด |

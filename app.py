@@ -15,8 +15,10 @@ from binance_data import (HIGHER_TIMEFRAME, POPULAR_QUOTES, PublicDataError,
                           TIMEFRAMES, count_time_gaps, fetch_catalog, fetch_klines,
                           fetch_spot_last_price, search_catalog)
 from coinglass_overlay import CoinGlassSnapshot, confirm_signal, parse_quick_paste
+from confluence import combine_timeframes
 from display_format import format_price, format_signed_price
 from entry_planner import EntryPlan, plan_entry
+from multi_timeframe import build_timeframe_report
 from public_derivatives import DerivativesDataError, evaluate_derivatives, fetch_with_fallback
 from research_engine import latest_reasons, prepare_features, with_signal
 
@@ -148,7 +150,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🪐 Orbit Crypto Signal Lab")
-st.caption("v2.5 · Binance Spot + Kraken/Binance/Bybit Futures public · Entry Zone/SL/TP · CoinGlass เสริม · ไม่ส่งออเดอร์ · ไม่มี API Key")
+st.caption("v2.6.1 · Single Multi-Timeframe Signal · Spot + Futures ฟรี · CoinGlass เสริม · ไม่ส่งออเดอร์")
 st.info("📱 มือถือ: แตะเมนู **>** มุมซ้ายบนเพื่อค้นหาเหรียญ/ตั้งค่าความเสี่ยง แล้วปิดเมนูเพื่อดูกราฟ · ข้อมูล CoinGlass ที่กรอกจะอยู่เฉพาะในเซสชันนี้")
 
 with st.sidebar:
@@ -170,7 +172,8 @@ with st.sidebar:
     default = symbols.index("BTCUSDT") if "BTCUSDT" in symbols else 0
     symbol = st.selectbox("เลือกคู่เหรียญ", symbols, index=default, format_func=lambda s: labels[s])
     selected = next(item for item in matches if item["symbol"] == symbol)
-    timeframe = st.selectbox("Timeframe", list(TIMEFRAMES), index=1)
+    timeframe = st.selectbox("Timeframe สำหรับกราฟละเอียด/Backtest เท่านั้น", list(TIMEFRAMES), index=1,
+                             help="หน้า Single MTF วิเคราะห์ทั้ง 4 ช่วงเวลาให้อัตโนมัติ ไม่ต้องเลือก Timeframe")
     history_size = st.select_slider("จำนวนแท่งประวัติ", options=[1000, 1500, 3000, 5000, 8000], value=3000)
     pivot_bars = st.slider("ความเข้มงวดของ Pivot", 2, 6, value=3)
     st.divider()
@@ -216,8 +219,124 @@ else:
 if price_stale:
     st.warning("ราคาล่าสุดอาจเก่าเกินไป: ระบบจะไม่ยืนยันสัญญาณสดจนกว่าข้อมูลจะอัปเดต")
 
-tabs = st.tabs(["📊 สัญญาณ", "🧪 Backtest", "🔁 Walk-forward", "📖 คู่มือ"])
-with tabs[0]:
+tabs = st.tabs(["🎯 สัญญาณ MTF รวม", "📊 สัญญาณละเอียด", "🧪 Backtest", "🔁 Walk-forward", "📖 คู่มือ"])
+def render_multi_timeframe_dashboard():
+    st.subheader(f"🎯 Single Multi-Timeframe Signal · {selected['base']}/{selected['quote']}")
+    st.caption(
+        "เลือกเหรียญเพียงครั้งเดียว ระบบวิเคราะห์ 15m + 1h + 4h + 1d เบื้องหลัง แล้วสรุปสัญญาณและแผน Entry ชุดเดียว"
+    )
+    st.info(
+        "คะแนนรวมถ่วงน้ำหนัก 1d 30% + 4h 30% + 1h 25% + 15m 15% "
+        "· ใช้แนวโน้มใหญ่กำหนดทิศทาง, 1h วางโซนราคา, 15m ยืนยันจังหวะ "
+        "· **ไม่เฉลี่ยราคา Entry ทั้งสี่กรอบ** และคะแนนไม่ใช่เปอร์เซ็นต์โอกาสทำกำไร"
+    )
+    if derivatives is None:
+        st.warning("Futures อัตโนมัติไม่พร้อม: ทุก Timeframe จะคง Final = WAIT จนกว่าจะได้ข้อมูลที่ใช้ได้")
+    else:
+        st.caption(f"Futures ที่ใช้ร่วมกัน: **{derivatives.source}** · ไม่ใช่ข้อมูล CoinGlass")
+    if snapshot is None:
+        st.caption("CoinGlass: **ยังไม่ได้กรอก** (ตัวกรองเสริม) · กรอกได้ที่แท็บ **📊 สัญญาณละเอียด** แล้วกลับมาดูผลรวมนี้")
+    else:
+        st.caption("CoinGlass: ใช้ชุดข้อมูลที่บันทึกสำหรับเหรียญนี้มาตรวจทุกกรอบ · เกณฑ์อายุข้อมูลของแต่ละกรอบไม่เท่ากัน (15m=1 ชม., 1h=2 ชม., 4h=4 ชม., 1d=24 ชม.)")
+    if spot_quote is None:
+        st.warning("ราคา Spot ล่าสุดไม่พร้อม จึงไม่มี Timeframe ใดแสดง READY ได้")
+    else:
+        st.caption(f"Spot จาก Binance ณ เวลาร้องขอ {spot_quote_time.astimezone(BKK):%d/%m/%Y %H:%M:%S} น.: **{format_price(spot_quote)} {selected['quote']}** · ไม่ใช่ราคา Bid/Ask")
+
+    frame_bars = {timeframe: base}
+    data_errors = {}
+    with st.spinner("กำลังเทียบแท่งปิด 15m / 1h / 4h / 1d ..."):
+        for tf in TIMEFRAMES:
+            if tf not in frame_bars:
+                try:
+                    frame_bars[tf] = get_candles(symbol, tf, history_size)
+                except (PublicDataError, ValueError, KeyError, IndexError) as exc:
+                    data_errors[tf] = str(exc)
+
+        reports = {}
+        for tf in TIMEFRAMES:
+            if tf in data_errors:
+                continue
+            parent_tf = HIGHER_TIMEFRAME[tf]
+            if parent_tf not in frame_bars:
+                data_errors[tf] = f"ข้อมูลกรอบใหญ่ {parent_tf} ไม่พร้อม"
+                continue
+            try:
+                frame = frame_bars[tf]
+                frame_analyzed = (analyzed if tf == timeframe else
+                                  with_signal(prepare_features(frame, frame_bars[parent_tf],
+                                                               tf, pivot_bars=pivot_bars)))
+                reports[tf] = build_timeframe_report(
+                    frame, frame_analyzed, tf,
+                    base_asset=selected["base"], derivatives=derivatives,
+                    coinglass=snapshot, now=datetime.now(timezone.utc),
+                    current_price=spot_quote, capital=capital, risk_pct=risk_pct,
+                    max_allocation_pct=allocation, fee_pct=fee_pct,
+                    slippage_pct=slip_pct,
+                )
+            except (PublicDataError, ValueError, KeyError, IndexError, TypeError) as exc:
+                data_errors[tf] = str(exc)
+
+    verdict = combine_timeframes(reports)
+    st.divider()
+    if verdict.status == "READY":
+        st.success("🟢 MTF BUY · ENTRY READY — เงื่อนไขในกฎทดลองผ่านแล้ว ตรวจราคากระดานจริงก่อนทำรายการ")
+    elif verdict.signal == "BUY":
+        st.warning("🟡 MTF BUY BIAS · WAIT FOR ENTRY — ทิศทางหลายกรอบสนับสนุน แต่ยังไม่ถึงจังหวะซื้อ")
+    else:
+        st.warning("🟡 MTF SIGNAL: WAIT — ยังไม่ผ่านเงื่อนไขการซื้อรวมทุกกรอบ")
+
+    if verdict.alignment_index is not None:
+        st.metric("คะแนนสอดคล้องของ 4 Timeframe (ไม่ใช่โอกาสกำไร)",
+                  f"{verdict.alignment_index:.1f}/100")
+        st.progress(verdict.alignment_index / 100)
+        st.caption("เกณฑ์ทดลองอย่างน้อย 70/100 · คะแนนรวมถูกทำให้เทียบกันได้ก่อนถ่วงน้ำหนัก ไม่ใช่อัตราชนะหรือความแม่นยำของการพยากรณ์")
+    else:
+        st.error("ข้อมูลไม่ครบทั้ง 4 กรอบ จึงไม่คำนวณคะแนน MTF และไม่ให้สัญญาณ BUY")
+
+    plan = verdict.entry
+    st.subheader("🎯 แผนเข้าซื้อชุดเดียว (อ้างอิงกรอบ 1h)")
+    if plan is not None and plan.entry_low is not None:
+        st.markdown(f"**Entry Zone ({selected['quote']}): `{format_price(plan.entry_low)}` – `{format_price(plan.entry_high)}`**")
+        cols = st.columns(2)
+        cols[0].metric("Stop Loss", format_price(plan.stop_loss))
+        cols[1].metric("Take Profit 1 · 1.5R", format_price(plan.take_profit_1))
+        cols = st.columns(2)
+        cols[0].metric("Take Profit 2 · 2.5R", format_price(plan.take_profit_2))
+        cols[1].metric("สถานะเข้า", "READY" if verdict.status == "READY" else "WAIT")
+        st.caption(f"แนวรับที่ใช้อ้างอิง: {plan.anchor_name} {format_price(plan.anchor_price)} {selected['quote']} · โซนกว้าง ±0.30 ATR จากแท่ง 1h ที่ปิดแล้ว")
+        if plan.expires_at is not None:
+            st.caption(f"แผนเดิมหมดอายุ {plan.expires_at.astimezone(BKK):%d/%m %H:%M} น. (เวลาไทย; รีเฟรชจะคำนวณใหม่)")
+        if verdict.status != "READY":
+            st.info("โซนนี้มีไว้เฝ้ารอเท่านั้น **อย่าซื้อเพียงเพราะราคาเข้าโซน** จนกว่ากฎ MTF จะผ่านและตรวจราคาเสนอขายจริง")
+    else:
+        st.info("ยังไม่มี Entry Zone/SL/TP ที่ใช้ได้จากกรอบ 1h · ระบบไม่สร้างราคาเข้าซื้อสมมติ")
+
+    times = []
+    if verdict.next_15m_close is not None:
+        times.append(f"ตรวจแท่ง 15m ถัดไป: {verdict.next_15m_close.astimezone(BKK):%d/%m %H:%M} น.")
+    if verdict.next_1h_close is not None:
+        times.append(f"ตรวจแท่ง 1h ถัดไป: {verdict.next_1h_close.astimezone(BKK):%d/%m %H:%M} น.")
+    if times:
+        st.caption(" · ".join(times) + " (เวลาไทย · ต้องรีเฟรชเว็บเอง)")
+
+    with st.expander(f"🔎 ทำไม MTF ยังรอ? ดูเงื่อนไขรวม ({sum(c.passed is True for c in verdict.checks)} ผ่าน / {sum(c.passed is False for c in verdict.checks)} ไม่ผ่าน)",
+                     expanded=verdict.status != "READY"):
+        for check in verdict.checks:
+            st.write(f"{'✅' if check.passed else '❌'} **{check.label}** — {check.detail}")
+        if data_errors:
+            for tf, err in data_errors.items():
+                st.caption(f"ข้อมูล {tf} ไม่พร้อม: {err}")
+        if snapshot is not None:
+            for tf in ("15m", "1h"):
+                if tf in reports and reports[tf].coinglass_blockers:
+                    for blocker in reports[tf].coinglass_blockers:
+                        st.warning(f"CoinGlass ({tf}): {blocker}")
+
+    st.caption("MTF เป็นสูตรรวมใหม่แบบทดลอง: ใช้ Spot + Futures สาธารณะจากตลาดที่ระบุ และ CoinGlass ที่กรอกเอง (ถ้ามี) · ไม่ส่งออเดอร์ · ไม่ผ่าน Backtest/Walk-forward ของกฎรวม")
+    return
+
+with tabs[1]:
     bars_day = max(1, 1440 // TIMEFRAMES[timeframe])
     price_change24 = (base["close"].iloc[-1] / base["close"].iloc[-1 - bars_day] - 1) * 100
     max_age = {"15m": 1, "1h": 2, "4h": 4, "1d": 24}[timeframe]
@@ -253,7 +372,7 @@ with tabs[0]:
     final_signal = auto["signal"]
     if snapshot is not None and cg["signal"] != raw:
         final_signal = "WAIT"  # An explicitly entered CoinGlass caution/invalid result vetoes.
-    if price_stale:
+    if price_stale or gaps:
         final_signal = "WAIT"
     colors = {"BUY": "🟢", "SELL": "🔴", "WAIT": "🟡"}
     futures_provider = f"{derivatives.provider} Futures" if derivatives is not None else "Public Futures"
@@ -356,7 +475,10 @@ with tabs[0]:
         st.caption("แผน Entry Zone/SL/TP อยู่ด้านบน และจะเปลี่ยนตามราคา/Timeframe ที่เลือก; SELL สำหรับ Spot หมายถึงขาย/ลดเหรียญที่ถือ ไม่ใช่เปิด Short")
     st.warning("โปรแกรมนี้ไม่ส่งคำสั่งซื้อขาย และไม่รับประกันกำไร ราคาในกระดานที่ผู้ใช้เทรดจริงอาจต่างจากแหล่งข้อมูล")
 
-with tabs[1]:
+with tabs[0]:
+    render_multi_timeframe_dashboard()
+
+with tabs[2]:
     st.subheader("Technical Strategy Backtest — ไม่รวม Futures และ CoinGlass")
     st.caption("จำลอง Spot ฝั่ง Long เท่านั้น · สัญญาณหลังแท่งปิด / เข้าแท่งถัดไป · Stop สำคัญกว่า Target ในแท่งเดียวกัน · รวมค่าธรรมเนียมและ Slippage")
     if gaps:
@@ -385,7 +507,7 @@ with tabs[1]:
         else:
             st.info("ยังไม่มีดีลที่เข้าเงื่อนไขในช่วงข้อมูลนี้")
 
-with tabs[2]:
+with tabs[3]:
     st.subheader("Rolling Walk-forward — ไม่รวม Futures และ CoinGlass")
     st.write("แต่ละรอบเลือกเกณฑ์คะแนนจากข้อมูลฝึกเท่านั้น จากนั้นทดสอบบนช่วงเวลาถัดไปซึ่งไม่ได้ใช้ปรับเกณฑ์")
     if gaps:
@@ -401,20 +523,21 @@ with tabs[2]:
                 st.warning("สัญญาณ Out-of-sample รวมยังน้อยกว่า 30 ดีล ผลยังไม่เพียงพอต่อการประเมินความน่าเชื่อถือ")
             st.caption("แต่ละช่วงเริ่มต้นด้วยทุนจำลองเท่ากัน ผลตอบแทนแต่ละช่วงไม่ควรบวกตรง ๆ แทนพอร์ตต่อเนื่อง")
 
-with tabs[3]:
+with tabs[4]:
     st.markdown("""
     ### วิธีใช้
     1. เลือกสกุลราคา แล้วพิมพ์รหัสเหรียญ (เช่น `BTC` หรือ `XRP`) ในแถบซ้าย
-    2. เลือกคู่เหรียญและ Timeframe จากนั้นรอสักครู่ให้ระบบคำนวณข้อมูลราคา
-    3. อ่าน **Technical Signal** จาก Spot, **Auto Signal** จาก Kraken/Binance/Bybit Futures (ชื่อผู้ให้ข้อมูลจะแสดงตามจริง) และ **Final Signal** ที่รวมตัวกรองเสริม
-    4. เปิดแท็บ **Backtest** และ **Walk-forward** เพื่อตรวจสถิติย้อนหลัง (เฉพาะกลยุทธ์เทคนิค)
-    5. CoinGlass เป็นข้อมูลเสริมแบบกรอกเอง; ถ้าไม่กรอกจะใช้ผล Futures แต่หากกรอกแล้วมีข้อเตือน/หมดอายุ จะเป็น `WAIT`
-    6. อ่าน **Entry Zone / SL / TP1 / TP2** ใต้ Final Signal: ถ้ายังเป็น WAIT ให้เฝ้ารอ ไม่ใช่คำสั่งซื้อ; ติดตามเวลาปิดแท่งและหมดอายุของแผน
+    2. เปิดแท็บ **🎯 สัญญาณ MTF รวม** เพื่อให้ระบบวิเคราะห์ 15m+1h+4h+1d และสรุปผลซื้อ/รอ **เป็นชุดเดียว** (ไม่ต้องเปลี่ยน Timeframe ในเมนู)
+    3. อ่าน **คะแนนความสอดคล้องถ่วงน้ำหนัก** (ไม่ใช่โอกาสทำกำไร) พร้อม Entry Zone / SL / TP ที่อิงกรอบ 1h ชุดเดียว
+    4. **MTF BUY BIAS ไม่เท่ากับ READY**: หากราคา/แท่งยังไม่ยืนยันจะขึ้น WAIT FOR ENTRY; กด **ทำไม MTF ยังรอ?** เพื่ออ่านเงื่อนไขรวม
+    5. เปิด **📊 สัญญาณละเอียด** หากต้องการดูกราฟ/หลักฐานแยกช่วงเวลา หรือกรอก CoinGlass ด้วยมือ ซึ่งจะถูกตรวจภายในผล MTF ด้วย
+    6. เปิดแท็บ **Backtest** และ **Walk-forward** เพื่อตรวจสถิติย้อนหลัง (เฉพาะกลยุทธ์เทคนิคเดิม ไม่รวมสูตร MTF รวม)
+    7. กด **🔄 ดึงข้อมูลใหม่** เมื่อต้องการประเมินราคา/แท่งล่าสุดอีกครั้ง ไม่ใช่การอัปเดตราคาอัตโนมัติทุกวินาที
 
     ### ข้อจำกัดสำคัญ
     - CoinGlass API ทางการเป็นบริการที่ใช้ API Key และแพ็กเกจชำระเงิน ณ วันที่ตรวจสอบ ดังนั้นโหมดฟรีต้องกรอกค่าด้วยมือ
     - ผล Backtest/Walk-forward **ไม่ได้รวม Kraken/Binance/Bybit Futures หรือ CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวมแล้ว
-    - **Entry Zone, SL และ TP ของ v2.5 ยังไม่ได้ Backtest/Walk-forward แบบครบกฎ**; เป็น heuristic เฝ้ารอเท่านั้น อาจคลาดเคลื่อนหรือไม่เกิดโซนที่ใช้ได้ในบางตลาด
+    - **สูตร Single Multi-Timeframe และ Entry Zone, SL, TP ของ v2.6.1 ยังไม่ได้ Backtest/Walk-forward แบบครบกฎ**; เป็น heuristic เฝ้ารอเท่านั้น อาจคลาดเคลื่อนหรือไม่เกิดโซนที่ใช้ได้ในบางตลาด
     - ข้อมูลอนุพันธ์มาจาก Kraken Perpetual USD, Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะเหรียญที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
     - ไม่ได้รับข้อมูล Liquidations 24h ครบจาก Public API ที่ใช้ จึงไม่ใช้ใน Auto Signal
     - ข้อมูลจาก Binance Spot อาจไม่ตรงกับตลาดที่ผู้ใช้ซื้อขายจริง รวมถึงอาจถูกจำกัดการเข้าถึงบางเครือข่าย/ภูมิภาค
