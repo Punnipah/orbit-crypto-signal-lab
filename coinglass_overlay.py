@@ -1,0 +1,145 @@
+"""CoinGlass manual snapshot verification and conservative signal confirmation.
+
+No CoinGlass API calls are made: official API access requires an API key and a
+subscription. All values must be entered by the user from a legitimately
+accessible CoinGlass page.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import math
+
+
+@dataclass(frozen=True)
+class CoinGlassSnapshot:
+    symbol: str
+    observed_at: datetime
+    funding_rate_pct: float
+    oi_change_24h_pct: float
+    long_short_account_ratio: float
+    long_liquidations_usd_24h: float
+    short_liquidations_usd_24h: float
+
+
+def validate_snapshot(
+    snapshot: CoinGlassSnapshot,
+    expected_symbol: str,
+    now: datetime,
+    max_age: timedelta,
+) -> list[str]:
+    problems: list[str] = []
+    if snapshot.symbol != expected_symbol:
+        problems.append("ข้อมูล CoinGlass เป็นคนละเหรียญกับกราฟที่เลือก")
+    if snapshot.observed_at.tzinfo is None or now.tzinfo is None:
+        problems.append("เวลา CoinGlass ต้องระบุเขตเวลา")
+    else:
+        age = now - snapshot.observed_at
+        if age > max_age:
+            problems.append("ข้อมูล CoinGlass เก่าเกินกำหนด ต้องอัปเดตก่อน")
+        if age < -timedelta(minutes=5):
+            problems.append("เวลาบันทึก CoinGlass อยู่ในอนาคต")
+    numeric = (
+        snapshot.funding_rate_pct,
+        snapshot.oi_change_24h_pct,
+        snapshot.long_short_account_ratio,
+        snapshot.long_liquidations_usd_24h,
+        snapshot.short_liquidations_usd_24h,
+    )
+    if not all(math.isfinite(value) for value in numeric):
+        problems.append("ข้อมูล CoinGlass ต้องเป็นตัวเลขที่ถูกต้อง")
+    if not 0 < snapshot.long_short_account_ratio <= 50:
+        problems.append("Long/Short Ratio ต้องมากกว่า 0")
+    if snapshot.long_liquidations_usd_24h < 0 or snapshot.short_liquidations_usd_24h < 0:
+        problems.append("Liquidation ต้องไม่ติดลบ")
+    if abs(snapshot.funding_rate_pct) > 5:
+        problems.append("Funding Rate ดูผิดหน่วย: ต้องกรอกเป็นเปอร์เซ็นต์ เช่น 0.01 = 0.01%")
+    if not -100 <= snapshot.oi_change_24h_pct <= 1000:
+        problems.append("OI Change 24h อยู่นอกช่วงที่สมเหตุสมผล")
+    return problems
+
+
+def confirm_signal(
+    technical_signal: str,
+    snapshot: CoinGlassSnapshot | None,
+    expected_symbol: str,
+    price_change_24h_pct: float,
+    *,
+    now: datetime | None = None,
+    max_age_hours: float = 4.0,
+) -> dict:
+    """Require current CoinGlass context before allowing BUY or SELL.
+
+    OI supports trend continuation only if it grows with price direction. The
+    funding/crowding/liquidation checks are protective heuristics, *not*
+    empirically calibrated probabilities or an independently backtested model.
+    """
+    now = now or datetime.now(timezone.utc)
+    if snapshot is None:
+        return {"signal": "WAIT", "status": "MISSING", "reasons": [
+            "ยังไม่มีข้อมูล CoinGlass ที่ผู้ใช้ยืนยัน ระบบจึงไม่ออก BUY/SELL"], "confirmed": False}
+    problems = validate_snapshot(snapshot, expected_symbol, now, timedelta(hours=max_age_hours))
+    if problems:
+        return {"signal": "WAIT", "status": "INVALID", "reasons": problems, "confirmed": False}
+    if technical_signal == "WAIT":
+        return {"signal": "WAIT", "status": "TECHNICAL_WAIT", "reasons": [
+            "ข้อมูล CoinGlass ผ่านการตรวจสอบ แต่ฝั่งเทคนิคยังเป็น WAIT"], "confirmed": False}
+
+    reasons: list[str] = []
+    caution = False
+    oi = snapshot.oi_change_24h_pct
+    funding = snapshot.funding_rate_pct
+    ratio = snapshot.long_short_account_ratio
+
+    if technical_signal == "BUY":
+        if price_change_24h_pct <= 0 or oi < 1:
+            caution = True
+            reasons.append("ราคา/OI ในรอบ 24 ชั่วโมงยังไม่ยืนยันแรงซื้อที่เพิ่มขึ้น")
+        else:
+            reasons.append("ราคาเพิ่มขึ้นพร้อม OI เพิ่มอย่างน้อย 1%: สนับสนุนแนวโน้มขาขึ้น")
+        if funding > 0.05 or ratio > 1.6:
+            caution = True
+            reasons.append("Funding สูงหรือ Long แออัด: เสี่ยงซื้อไล่ราคา")
+        elif funding < -0.05:
+            caution = True
+            reasons.append("Funding ติดลบมาก: ภาวะตลาดไม่ปกติ ควรตรวจเพิ่ม")
+        else:
+            reasons.append("Funding และสัดส่วน Long/Short ยังไม่อยู่ในโซนแออัดเกินเกณฑ์")
+    elif technical_signal == "SELL":
+        if price_change_24h_pct >= 0 or oi < 1:
+            caution = True
+            reasons.append("ราคา/OI ในรอบ 24 ชั่วโมงยังไม่ยืนยันแรงขายที่เพิ่มขึ้น")
+        else:
+            reasons.append("ราคาลดลงพร้อม OI เพิ่มอย่างน้อย 1%: สนับสนุนแรงขาย")
+        if funding < -0.05 or ratio < 0.625:
+            caution = True
+            reasons.append("Short แออัด: เสี่ยงเด้งกลับจาก Short Squeeze")
+        elif funding > 0.05:
+            caution = True
+            reasons.append("Funding บวกสูงมาก: โครงสร้างตลาดไม่สมดุล")
+        else:
+            reasons.append("Funding และสัดส่วน Long/Short ยังไม่อยู่ในโซนแออัดเกินเกณฑ์")
+    else:
+        return {"signal": "WAIT", "status": "INVALID", "reasons": ["สัญญาณเทคนิคไม่ถูกต้อง"], "confirmed": False}
+
+    long_liq = snapshot.long_liquidations_usd_24h
+    short_liq = snapshot.short_liquidations_usd_24h
+    total_liq = long_liq + short_liq
+    if total_liq == 0:
+        reasons.append("ไม่พบ Liquidation ในชุดข้อมูลที่กรอก; ตรวจสอบว่าเป็นค่า 0 จริง")
+    else:
+        long_share = long_liq / total_liq
+        if long_share > 0.75:
+            reasons.append("Liquidation 24h หนักไปทาง Long: มีแรงล้างสถานะ Long")
+        elif long_share < 0.25:
+            reasons.append("Liquidation 24h หนักไปทาง Short: มีแรงล้างสถานะ Short")
+        else:
+            reasons.append("Liquidation 24h กระจายสองฝั่ง ไม่เห็นฝั่งครอบงำชัด")
+
+    # Liquidation shares alone cannot prove continuation or reversal without
+    # a denominator/market-size baseline. Hence they inform but never veto.
+    if caution:
+        reasons.append("CoinGlass ยังไม่ยืนยันสัญญาณเทคนิค จึงปรับผลสุดท้ายเป็น WAIT")
+        return {"signal": "WAIT", "status": "CAUTION", "reasons": reasons, "confirmed": False}
+    return {"signal": technical_signal, "status": "CONFIRMED", "reasons": reasons, "confirmed": True}
