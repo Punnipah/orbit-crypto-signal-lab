@@ -13,7 +13,7 @@ import streamlit as st
 from backtest_engine import BacktestConfig, simulate, walk_forward
 from binance_data import (HIGHER_TIMEFRAME, POPULAR_QUOTES, PublicDataError,
                           TIMEFRAMES, count_time_gaps, fetch_catalog, fetch_klines, search_catalog)
-from coinglass_overlay import CoinGlassSnapshot, confirm_signal
+from coinglass_overlay import CoinGlassSnapshot, confirm_signal, parse_quick_paste
 from public_derivatives import DerivativesDataError, evaluate_derivatives, fetch_with_fallback
 from research_engine import latest_reasons, prepare_features, with_signal
 
@@ -72,6 +72,19 @@ def coin_glass_panel(base_asset: str):
     with st.expander("🧭 CoinGlass — ข้อมูลยืนยันสัญญาณ (กรอกเอง)", expanded=snapshot is None):
         st.markdown(f"อ่านข้อมูลจาก [CoinGlass](https://www.coinglass.com/) สำหรับเหรียญ **{base_asset}** แล้วกรอกข้อมูลล่าสุด")
         st.caption("Funding ใช้หน่วยเปอร์เซ็นต์ เช่น 0.01 = 0.01% · OI และ Liquidations ให้ใช้กรอบ 24 ชั่วโมง")
+        st.caption("📱 กรอกเร็ว: วางตัวเลข 5 ค่าในช่องเดียวตามลำดับ Funding%, OI 24h%, L/S Ratio, Long Liq USD, Short Liq USD (คั่นด้วยคอมมา)")
+        pasted = st.text_area("วางตัวเลข CoinGlass 5 ค่า (ไม่บังคับ)",
+                              placeholder="0.01, 2.50, 1.10, 120000, 90000", height=80,
+                              help="เป็นเพียงตัวอย่างรูปแบบ ห้ามใช้เลขตัวอย่างเป็นข้อมูลตลาดจริง")
+        values = None
+        if pasted.strip():
+            try:
+                values = parse_quick_paste(pasted)
+            except ValueError as exc:
+                st.error(f"รูปแบบไม่ถูกต้อง: {exc}")
+                values = None
+        if values is not None:
+            st.success("อ่านตัวเลขได้ 5 ค่าแล้ว กรุณาตรวจหน่วยและเหรียญก่อนบันทึก")
         with st.form("coinglass_entry"):
             a, b = st.columns(2)
             with a:
@@ -80,19 +93,19 @@ def coin_glass_panel(base_asset: str):
                 time_seen = st.time_input("เวลาที่อ่านข้อมูล (ไทย)", value=now_th.time().replace(second=0, microsecond=0))
             a, b = st.columns(2)
             with a:
-                funding = st.number_input("Funding Rate (%)", value=0.0, min_value=-5.0,
+                funding = st.number_input("Funding Rate (%)", value=values[0] if values else 0.0, min_value=-5.0,
                                           max_value=5.0, step=0.001, format="%.4f")
             with b:
-                oi_change = st.number_input("OI Change 24h (%)", value=0.0, min_value=-100.0,
+                oi_change = st.number_input("OI Change 24h (%)", value=values[1] if values else 0.0, min_value=-100.0,
                                             max_value=1000.0, step=0.1, format="%.2f")
-            ratio = st.number_input("Long/Short Accounts Ratio", value=1.0, min_value=0.01,
+            ratio = st.number_input("Long/Short Accounts Ratio", value=values[2] if values else 1.0, min_value=0.01,
                                     max_value=50.0, step=0.01, format="%.3f")
             a, b = st.columns(2)
             with a:
-                long_liq = st.number_input("Liquidated Long 24h (USD)", value=0.0,
+                long_liq = st.number_input("Liquidated Long 24h (USD)", value=values[3] if values else 0.0,
                                            min_value=0.0, step=100000.0, format="%.2f")
             with b:
-                short_liq = st.number_input("Liquidated Short 24h (USD)", value=0.0,
+                short_liq = st.number_input("Liquidated Short 24h (USD)", value=values[4] if values else 0.0,
                                             min_value=0.0, step=100000.0, format="%.2f")
             confirmed = st.checkbox("ยืนยันว่าคัดลอกจาก CoinGlass จริงและตรวจหน่วยแล้ว")
             if st.form_submit_button("บันทึก CoinGlass", width="stretch"):
@@ -126,7 +139,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 st.title("🪐 Orbit Crypto Signal Lab")
-st.caption("v2.2 · Binance Spot + Binance/Bybit Futures public · CoinGlass เสริม · ไม่ส่งออเดอร์ · ไม่มี API Key")
+st.caption("v2.3 · Binance Spot + Kraken/Binance/Bybit Futures public · CoinGlass เสริม · ไม่ส่งออเดอร์ · ไม่มี API Key")
 st.info("📱 มือถือ: แตะเมนู **>** มุมซ้ายบนเพื่อค้นหาเหรียญ/ตั้งค่าความเสี่ยง แล้วปิดเมนูเพื่อดูกราฟ · ข้อมูล CoinGlass ที่กรอกจะอยู่เฉพาะในเซสชันนี้")
 
 with st.sidebar:
@@ -199,8 +212,8 @@ with tabs[0]:
     price_change24 = (base["close"].iloc[-1] / base["close"].iloc[-1 - bars_day] - 1) * 100
     max_age = {"15m": 1, "1h": 2, "4h": 4, "1d": 24}[timeframe]
     raw = str(analyzed["signal"].iloc[-1])
-    st.subheader("ข้อมูลอนุพันธ์อัตโนมัติ — Binance / Bybit Futures")
-    st.caption("คู่ USDT · ลอง Binance ก่อน ถ้าใช้ไม่ได้จึงลอง Bybit · ข้อมูลตลาดเดียวต่อครั้ง ไม่ใช่ CoinGlass · กราฟ Spot มาจาก Binance")
+    st.subheader("ข้อมูลอนุพันธ์อัตโนมัติ — Kraken / Binance / Bybit")
+    st.caption("คู่ Spot USDT · ลอง Kraken ก่อน จากนั้น Binance และ Bybit · Futures อาจเป็นสัญญา USD คนละตลาดกับ Spot · ไม่ใช่ CoinGlass")
     derivatives = None
     derivatives_error = None
     try:
@@ -212,12 +225,13 @@ with tabs[0]:
         st.warning(f"ข้อมูล Futures ไม่พร้อม: {derivatives_error or 'ไม่มีข้อมูล'} — Auto Signal = WAIT")
     else:
         f_cols = st.columns(2)
-        f_cols[0].metric("Funding ล่าสุด (%)", f"{derivatives.funding_rate_pct:+.4f}%")
+        f_cols[0].metric("Funding ล่าสุด" + (" (%)" if derivatives.funding_unit == "percent" else " (raw)"),
+                         f"{derivatives.funding_rate_pct:+.4f}" + ("%" if derivatives.funding_unit == "percent" else ""))
         f_cols[1].metric("OI เปลี่ยน 24 ชม.", f"{derivatives.oi_change_24h_pct:+.2f}%")
         f_cols[0].metric("Long/Short Accounts", f"{derivatives.long_short_account_ratio:.3f}")
-        f_cols[1].metric("OI มูลค่า (USDT)", f"{derivatives.oi_notional_usdt:,.0f}")
+        f_cols[1].metric(f"OI ล่าสุด ({derivatives.oi_unit})", f"{derivatives.oi_notional_usdt:,.0f}")
         st.caption(f"ที่มา: {derivatives.source} · Funding {derivatives.funding_at.astimezone(BKK):%d/%m %H:%M} · OI {derivatives.oi_at.astimezone(BKK):%d/%m %H:%M} · L/S {derivatives.ratio_at.astimezone(BKK):%d/%m %H:%M} (เวลาไทย)")
-        st.info("OI Change 24h ของ Binance คำนวณจากมูลค่า OI; ของ Bybit คำนวณจากปริมาณสัญญา จึงเทียบค่าข้ามแหล่งตรง ๆ ไม่ได้ · Liquidations รวมหลายตลาดไม่มีใน Public API ชุดนี้")
+        st.info("OI Change 24h ของ Binance ใช้มูลค่า OI, ส่วน Bybit/Kraken ใช้ปริมาณสัญญา; เปรียบเทียบข้ามแหล่งตรง ๆ ไม่ได้ · Funding Kraken แสดงค่า raw เพื่อทราบ แต่ไม่ใช้เป็นเกณฑ์ crowding เพราะหน่วยไม่เทียบเท่า · ไม่มี Liquidations รวม CoinGlass")
     st.caption(f"Auto Signal (ทดลอง): **{auto['signal']}** · {auto['status']} · ยังไม่ได้ Backtest กฎ Futures ร่วมกับกลยุทธ์")
     for reason in auto["reasons"]:
         st.write("• " + reason)
@@ -330,7 +344,7 @@ with tabs[3]:
     ### ข้อจำกัดสำคัญ
     - CoinGlass API ทางการเป็นบริการที่ใช้ API Key และแพ็กเกจชำระเงิน ณ วันที่ตรวจสอบ ดังนั้นโหมดฟรีต้องกรอกค่าด้วยมือ
     - ผล Backtest/Walk-forward **ไม่ได้รวม Binance Futures หรือ CoinGlass** จึงห้ามตีความว่าได้พิสูจน์กลยุทธ์รวมแล้ว
-    - ข้อมูลอนุพันธ์มาจาก Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะคู่ USDT ที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
+    - ข้อมูลอนุพันธ์มาจาก Kraken Perpetual USD, Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะเหรียญที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
     - ไม่ได้รับข้อมูล Liquidations 24h ครบจาก Public API ที่ใช้ จึงไม่ใช้ใน Auto Signal
     - ข้อมูลจาก Binance Spot อาจไม่ตรงกับตลาดที่ผู้ใช้ซื้อขายจริง รวมถึงอาจถูกจำกัดการเข้าถึงบางเครือข่าย/ภูมิภาค
     - ไม่มีการส่งออเดอร์, ไม่มีการใช้ Leverage, ไม่มีการเปิด Short และไม่มีแจ้งเตือน Push ในรุ่นนี้

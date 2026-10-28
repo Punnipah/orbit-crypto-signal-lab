@@ -4,7 +4,8 @@ from unittest.mock import patch
 
 from public_derivatives import (DerivativesDataError, DerivativesSnapshot,
                                 evaluate_derivatives, fetch_derivatives, fetch_with_fallback,
-                                parse_bybit, parse_snapshot)
+                                fetch_kraken, parse_bybit, parse_kraken, parse_snapshot)
+from coinglass_overlay import parse_quick_paste
 
 
 NOW = datetime(2026, 10, 28, 10, 0, tzinfo=timezone.utc)
@@ -80,10 +81,50 @@ class PublicDerivativesTests(unittest.TestCase):
 
     def test_fallback_returns_only_one_exchange(self):
         snapshot = DerivativesSnapshot("BTCUSDT", NOW, .01, 2, 1, 100, NOW, NOW, NOW, "Bybit")
-        with patch("public_derivatives.fetch_derivatives", side_effect=DerivativesDataError("451")):
-            with patch("public_derivatives.fetch_bybit", return_value=snapshot) as fallback:
-                self.assertEqual(fetch_with_fallback("BTCUSDT"), snapshot)
-                fallback.assert_called_once_with("BTCUSDT")
+        with patch("public_derivatives.fetch_kraken", side_effect=DerivativesDataError("no Kraken")):
+            with patch("public_derivatives.fetch_derivatives", side_effect=DerivativesDataError("451")):
+                with patch("public_derivatives.fetch_bybit", return_value=snapshot) as fallback:
+                    self.assertEqual(fetch_with_fallback("BTCUSDT"), snapshot)
+                    fallback.assert_called_once_with("BTCUSDT")
+
+    @staticmethod
+    def kraken_fixture():
+        ticker = {"tickers": [{"symbol": "PF_XBTUSD", "tag": "perpetual", "suspended": False,
+                               "lastTime": (NOW - timedelta(minutes=2)).isoformat(), "fundingRate": 0.87}]}
+        oi = {"result": {"timestamp": [int((NOW - timedelta(hours=25-i)).timestamp()) for i in range(26)],
+                         "data": [[100+i, 102+i, 99+i, 100+i] for i in range(26)]}}
+        ratio = {"result": {"timestamp": [int((NOW - timedelta(hours=1)).timestamp())], "data": [1.1]}}
+        return ticker, oi, ratio
+
+    def test_kraken_24h_fresh_and_never_normalizes_funding(self):
+        value = parse_kraken("BTCUSDT", "PF_XBTUSD", *self.kraken_fixture(), now=NOW)
+        self.assertAlmostEqual(value.oi_change_24h_pct, (125 / 101 - 1) * 100)
+        self.assertEqual(value.oi_unit, "contracts")
+        self.assertEqual(value.funding_unit, "Kraken raw (not normalized)")
+        # 0.87 is Kraken-native raw, not a Binance-compatible percent value.
+        self.assertEqual(evaluate_derivatives("BUY", value, 3)["signal"], "BUY")
+
+    def test_kraken_stale_rejected(self):
+        ticker, oi, ratio = self.kraken_fixture()
+        ratio["result"]["timestamp"] = [int((NOW - timedelta(hours=4)).timestamp())]
+        with self.assertRaises(DerivativesDataError):
+            parse_kraken("BTCUSDT", "PF_XBTUSD", ticker, oi, ratio, now=NOW)
+
+    def test_kraken_uses_public_read_only_paths(self):
+        ticker, oi, ratio = self.kraken_fixture()
+        with patch("public_derivatives._kraken_request", side_effect=[ticker, oi, ratio]) as request:
+            with patch("public_derivatives.parse_kraken"):
+                fetch_kraken("BTCUSDT")
+        self.assertEqual([c.args[0] for c in request.call_args_list], [
+            "/derivatives/api/v3/tickers", "/api/charts/v1/analytics/PF_XBTUSD/open-interest",
+            "/api/charts/v1/analytics/PF_XBTUSD/long-short-ratio"])
+
+    def test_quick_paste_must_be_five_real_eligible_numbers(self):
+        self.assertEqual(parse_quick_paste("0.01, 2.5, 1.1, 120000, 90000"),
+                         (0.01, 2.5, 1.1, 120000.0, 90000.0))
+        for invalid in ("0.01,2.5,1.1,12", "nan,2.5,1.1,0,0", "2.5,2.5,0,0,0", "0,0,1,-5,0"):
+            with self.assertRaises(ValueError):
+                parse_quick_paste(invalid)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 API_BASE = "https://fapi.binance.com"
 BYBIT_BASE = "https://api.bybit.com"
+KRAKEN_BASE = "https://futures.kraken.com"
 
 
 class DerivativesDataError(Exception):
@@ -35,6 +36,8 @@ class DerivativesSnapshot:
     oi_at: datetime
     ratio_at: datetime
     source: str = "Binance USDⓈ-M Futures (single exchange)"
+    oi_unit: str = "USDT"
+    funding_unit: str = "percent"
 
 
 def _request(path: str, params: dict) -> dict | list:
@@ -55,6 +58,21 @@ def _bybit_request(path: str, params: dict) -> dict:
         raise DerivativesDataError(f"Bybit Public API ไม่พร้อมใช้งาน: {exc}") from exc
     if not isinstance(data, dict) or data.get("retCode") != 0:
         raise DerivativesDataError("Bybit ไม่ส่งข้อมูลที่ใช้ได้")
+    return data
+
+
+def _kraken_request(path: str, params: dict | None = None) -> dict:
+    url = KRAKEN_BASE + path
+    if params:
+        url += "?" + urlencode(params)
+    req = Request(url, headers={"User-Agent": "OrbitSignalLab/2.3"})
+    try:
+        with urlopen(req, timeout=12) as response:
+            data = json.load(response)
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+        raise DerivativesDataError(f"Kraken Futures Public API ไม่พร้อมใช้งาน: {exc}") from exc
+    if not isinstance(data, dict):
+        raise DerivativesDataError("Kraken คืนข้อมูลไม่ถูกต้อง")
     return data
 
 
@@ -195,15 +213,91 @@ def fetch_bybit(symbol: str) -> DerivativesSnapshot:
     return parse_bybit(symbol, ticker, oi, ratio)
 
 
-def fetch_with_fallback(symbol: str) -> DerivativesSnapshot:
-    """Try Binance first; Bybit only if unavailable, never mix sources."""
+def parse_kraken(symbol: str, instrument: str, tickers: dict, oi: dict, ratios: dict,
+                 *, now: datetime | None = None) -> DerivativesSnapshot:
+    """Kraken analytics: OI uses contract units; funding is venue-native raw.
+
+    These units are deliberately not relabeled as USD notional or Binance-like
+    percent. Kraken analytics timestamps are seconds, unlike ticker ISO time.
+    """
+    now = now or datetime.now(timezone.utc)
     try:
-        return fetch_derivatives(symbol)
+        matching = [t for t in tickers["tickers"] if t.get("symbol") == instrument
+                    and t.get("tag") == "perpetual" and t.get("suspended") is False]
+        if len(matching) != 1:
+            raise DerivativesDataError("Kraken ไม่มีสัญญา Perpetual ที่เปิดซื้อขายสำหรับเหรียญนี้")
+        ticker = matching[0]
+        observed = datetime.fromisoformat(ticker["lastTime"].replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            raise DerivativesDataError("Kraken Ticker ไม่มี timezone")
+        oid = oi["result"]
+        rid = ratios["result"]
+        oi_stamps, oi_data = oid["timestamp"], oid["data"]
+        ratio_stamps, ratio_data = rid["timestamp"], rid["data"]
+        if not oi_stamps or len(oi_stamps) != len(oi_data) or not ratio_stamps or len(ratio_stamps) != len(ratio_data):
+            raise DerivativesDataError("Kraken Analytics ไม่ครบ")
+        oi_points = sorted(zip(oi_stamps, oi_data), key=lambda item: int(item[0]))
+        ratio_points = sorted(zip(ratio_stamps, ratio_data), key=lambda item: int(item[0]))
+        oi_at = datetime.fromtimestamp(int(oi_points[-1][0]), tz=timezone.utc)
+        previous = [p for p in oi_points[:-1] if int(p[0]) <= int(oi_points[-1][0]) - 86400]
+        if not previous or int(oi_points[-1][0]) - int(previous[-1][0]) > 26 * 3600:
+            raise DerivativesDataError("Kraken OI มีประวัติย้อนหลังไม่ครบ 24 ชั่วโมง")
+        # Kraken OI chart OHLC: [open, high, low, close].
+        latest_oi = _number(oi_points[-1][1][3], "Kraken OI ล่าสุด")
+        old_oi = _number(previous[-1][1][3], "Kraken OI 24 ชั่วโมงก่อน")
+        ratio_at = datetime.fromtimestamp(int(ratio_points[-1][0]), tz=timezone.utc)
+        ratio = _number(ratio_points[-1][1], "Kraken Long/Short")
+        funding = _number(ticker["fundingRate"], "Kraken Funding native")
+        if min(latest_oi, old_oi, ratio) <= 0 or ratio > 50:
+            raise DerivativesDataError("Kraken OI หรือ Long/Short ไม่ถูกต้อง")
+        for label, stamp, limit in (("Ticker", observed, timedelta(minutes=20)),
+                                    ("OI", oi_at, timedelta(hours=3)),
+                                    ("Long/Short", ratio_at, timedelta(hours=3))):
+            age = now - stamp
+            if age > limit or age < -timedelta(minutes=5):
+                raise DerivativesDataError(f"Kraken {label} เก่าหรือเวลาผิดปกติ")
+        return DerivativesSnapshot(
+            symbol=symbol, observed_at=observed, funding_rate_pct=funding,
+            oi_change_24h_pct=(latest_oi / old_oi - 1) * 100,
+            long_short_account_ratio=ratio, oi_notional_usdt=latest_oi,
+            funding_at=observed, oi_at=oi_at, ratio_at=ratio_at,
+            source=f"Kraken Futures {instrument} (single exchange)",
+            oi_unit="contracts", funding_unit="Kraken raw (not normalized)")
+    except (KeyError, IndexError, TypeError, ValueError, OverflowError) as exc:
+        raise DerivativesDataError("รูปแบบข้อมูล Kraken ไม่ครบหรือเปลี่ยนแปลง") from exc
+
+
+def fetch_kraken(symbol: str) -> DerivativesSnapshot:
+    if not symbol.isascii() or not symbol.isalnum() or not symbol.endswith("USDT") or len(symbol) > 24:
+        raise DerivativesDataError("Kraken comparison ต้องเป็นคู่ Spot USDT")
+    coin = symbol[:-4]
+    if not coin or not coin.isalnum():
+        raise DerivativesDataError("สัญลักษณ์ Kraken ไม่ถูกต้อง")
+    instrument = "PF_" + ("XBT" if coin == "BTC" else coin) + "USD"
+    ticker = _kraken_request("/derivatives/api/v3/tickers")
+    # Validate symbol from the ticker list before requesting expensive analytics.
+    active = [t for t in ticker.get("tickers", []) if t.get("symbol") == instrument
+              and t.get("tag") == "perpetual" and t.get("suspended") is False]
+    if not active:
+        raise DerivativesDataError(f"ไม่พบ Kraken Futures {instrument} ที่กำลังซื้อขาย")
+    root = f"/api/charts/v1/analytics/{instrument}"
+    oi = _kraken_request(root + "/open-interest", {"interval": 3600})
+    ratio = _kraken_request(root + "/long-short-ratio", {"interval": 3600})
+    return parse_kraken(symbol, instrument, ticker, oi, ratio)
+
+
+def fetch_with_fallback(symbol: str) -> DerivativesSnapshot:
+    """Try a verified public endpoint first; never combine venue data."""
+    try:
+        return fetch_kraken(symbol)
     except DerivativesDataError as first:
         try:
-            return fetch_bybit(symbol)
+            return fetch_derivatives(symbol)
         except DerivativesDataError as second:
-            raise DerivativesDataError(f"Binance: {first} | Bybit: {second}") from second
+            try:
+                return fetch_bybit(symbol)
+            except DerivativesDataError as third:
+                raise DerivativesDataError(f"Kraken: {first} | Binance: {second} | Bybit: {third}") from third
 
 
 def evaluate_derivatives(technical_signal: str, snapshot: DerivativesSnapshot | None,
@@ -215,18 +309,21 @@ def evaluate_derivatives(technical_signal: str, snapshot: DerivativesSnapshot | 
         return {"signal": "WAIT", "status": "TECHNICAL_WAIT", "reasons": ["ฝั่งเทคนิคยังไม่ยืนยัน BUY/SELL"]}
     oi, funding, ratio = (snapshot.oi_change_24h_pct, snapshot.funding_rate_pct,
                           snapshot.long_short_account_ratio)
+    funding_comparable = snapshot.funding_unit == "percent"
     reasons = []
     if technical_signal == "BUY":
         if price_change_24h_pct <= 0 or oi < 1:
             reasons.append("ราคาและ OI 24h ไม่ยืนยันแรงซื้อพร้อมกัน")
-        if funding > 0.05 or funding < -0.05 or ratio > 1.6:
+        if (funding_comparable and abs(funding) > 0.05) or ratio > 1.6:
             reasons.append("Funding หรือ Long crowding เกินกรอบระวัง")
     else:
         if price_change_24h_pct >= 0 or oi < 1:
             reasons.append("ราคาและ OI 24h ไม่ยืนยันแรงขายพร้อมกัน")
-        if funding < -0.05 or funding > 0.05 or ratio < 0.625:
+        if (funding_comparable and abs(funding) > 0.05) or ratio < 0.625:
             reasons.append("Funding หรือ Short crowding เกินกรอบระวัง")
     if reasons:
         return {"signal": "WAIT", "status": "CAUTION", "reasons": reasons}
     return {"signal": technical_signal, "status": "SUPPORTED", "reasons": [
-        "Binance Futures สนับสนุนแนวโน้มตามเกณฑ์ทดลอง (ไม่ใช่ CoinGlass หรือการพิสูจน์กำไร)"]}
+        f"{snapshot.source} สนับสนุนแนวโน้มตามเกณฑ์ทดลอง (ไม่ใช่ CoinGlass หรือการพิสูจน์กำไร)",
+        "Funding Kraken แสดงเพื่อทราบเท่านั้น ไม่ใช้เกณฑ์ crowding เนื่องจากหน่วยไม่เทียบเท่า Binance" if not funding_comparable else
+        "Funding ใช้เกณฑ์ crowding เฉพาะแหล่งที่หน่วยเป็นเปอร์เซ็นต์ตามที่กำหนด"]}

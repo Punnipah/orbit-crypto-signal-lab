@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import math
+import re
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,24 @@ class CoinGlassSnapshot:
     long_short_account_ratio: float
     long_liquidations_usd_24h: float
     short_liquidations_usd_24h: float
+
+
+def parse_quick_paste(text: str) -> tuple[float, float, float, float, float]:
+    """Parse five manually copied figures; never infer or scrape missing fields."""
+    fields = [part.strip() for part in re.split(r"[,;\t\n]+", text.strip()) if part.strip()]
+    if len(fields) != 5:
+        raise ValueError("ต้องใส่ตัวเลข 5 ค่า คั่นด้วยคอมมา")
+    try:
+        nums = tuple(float(field) for field in fields)
+    except ValueError as exc:
+        raise ValueError("มีข้อมูลที่ไม่ใช่ตัวเลข") from exc
+    funding, oi, ratio, long_liq, short_liq = nums
+    if not all(math.isfinite(v) for v in nums):
+        raise ValueError("ต้องเป็นตัวเลขที่ใช้ได้")
+    if not (-5 <= funding <= 5 and -100 <= oi <= 1000 and 0 < ratio <= 50
+            and 0 <= long_liq <= 1e15 and 0 <= short_liq <= 1e15):
+        raise ValueError("มีค่าผิดหน่วยหรืออยู่นอกช่วงที่กำหนด")
+    return nums
 
 
 def validate_snapshot(
