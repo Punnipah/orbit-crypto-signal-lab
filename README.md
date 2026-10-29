@@ -1,6 +1,68 @@
-# Orbit Crypto Signal Lab v2.7 — Market Footprint + Single MTF (Windows + มือถือ)
+# Orbit Crypto Signal Lab v4.1 — Telegram 15m Monitor + Frozen Watch Plan + MTF
 
-โปรแกรมวิเคราะห์สัญญาณคริปโตแบบอ่านข้อมูลอย่างเดียว ใช้เครื่องมือฟรี ไม่เชื่อมบัญชีซื้อขาย ไม่มี API Key หรือคำสั่งส่งออเดอร์
+โปรแกรมวิเคราะห์สัญญาณคริปโตแบบอ่านข้อมูลอย่างเดียว ใช้เครื่องมือฟรี ไม่เชื่อมบัญชีซื้อขาย **ไม่ต้องใช้ API Key ของกระดานเทรด** และไม่มีคำสั่งส่งออเดอร์ (ระบบ Telegram ใช้ Bot Token ส่วนตัวใน GitHub Secrets)
+
+## ใหม่ v4.1 — ระบบแจ้งเตือน Telegram โดยไม่ต้องเปิดหน้าเว็บค้างไว้
+
+1. **GitHub Actions Schedule**: ประเมิน `PEPEUSDT`, `BTCUSDT`, `DOGEUSDT` ทุก 15 นาที (UTC นาที :02/:17/:32/:47; อาจรันช้าหรือข้ามรอบได้)
+2. **ใช้กฎ MTF เดิม**: อ่านแท่งปิด 15m/1h/4h/1d และเช็ก Futures, Order Book/Aggressor Trades, BTC Regime, Taker Buy, ความเบี่ยงเบน Bybit เมื่อข้อมูลมี, R:R หลังค่าธรรมเนียม ไม่มี Futures/Spot/Book ที่จำเป็นแล้วไม่ส่ง BUY
+3. **รองรับแผนที่ล็อกไว้**: นำลิงก์ `?watch=` ของแต่ละเหรียญไปเก็บใน GitHub Secret `ORBIT_WATCH_LINKS` เพื่อให้ตัวตรวจใช้ Entry Zone/SL/TP เดิม แม้ปิดเว็บ (ไม่ย้ายโซนอัตโนมัติเมื่อแผนหมดอายุ)
+4. **ถ้ายังไม่มีแผนล็อก**: ตัวตรวจยังแจ้งสถานะ `MTF_READY` ของเหรียญนั้นได้ แต่ระบุชัดว่าเป็น MTF สด ไม่ใช่จุดซื้อจาก Frozen Watch
+5. **แจ้งเฉพาะเหตุสำคัญ**: READY_NOW, MTF_READY, INVALIDATED, PASSED, EXPIRED, สัญญาณ READY หลุด และข้อมูลขาด/Manual CoinGlass หมดอายุ พร้อม Outbox และการกันข้อความซ้ำที่บันทึกแยก GitHub Branch `orbit-alert-state`
+6. **Telegram Token/Chat ID อยู่ใน GitHub Secrets** เท่านั้น ไม่อยู่ใน Repository หรือไฟล์ ZIP; โหมดดูราคา/วิเคราะห์ยังใช้ฟรีเหมือนเดิม ไม่มีการเชื่อมบัญชี Exchange
+7. **CoinGlass ยังเป็นข้อมูลกรอกมือ**: เว็บไม่ซิงก์ข้อมูลเซสชันไป GitHub โดยอัตโนมัติ; หากต้องการใส่ในตัวแจ้งเตือนให้คัดลอกค่าจริงไป `monitor_coinglass_manual.json` ซึ่งจะ veto เมื่อเก่า/ผิดเกณฑ์
+
+**เริ่มต้น:** อ่าน **`MONITOR_TELEGRAM_SETUP_TH.md`** แล้วทำตาม 6 ขั้นตอน. การอัปโหลด ZIP อย่างเดียว **ยังไม่เปิด Telegram Monitor**; ต้องสร้าง Bot, Secrets และ GitHub Actions Workflow ก่อน. กฎ v4.1 รวมทุกแหล่งยัง **ไม่ได้ผ่าน Full Backtest/Walk-forward**, การแจ้งเตือนไม่ใช่คำสั่งซื้อ และอาจมาช้ากว่าจุดเข้า
+
+## v4.0 ที่ยังคงอยู่ใน v4.1 — รอเข้าซื้อจากแผนเดิมให้เป็นระบบ
+
+จุดเปลี่ยนที่ผู้ใช้ต้องการ: **แตะ Entry Zone ไม่ถือเป็นสัญญาณซื้อ** และ **เปิดหน้าเว็บใหม่แล้วโซนที่กำลังเฝ้ารอไม่ควรถูกแทนที่โดยแผนสด**
+
+1. **🧷 Frozen Watch Plan**: ผู้ใช้เลือกเหรียญเพียงตัวเดียว กด "ล็อก Entry Zone ปัจจุบัน" เพื่อเก็บ Entry Low/High, SL, TP1/TP2, ต้นทุนจำลอง และเวลาหมดอายุเป็นข้อมูลที่ **ไม่เลื่อนตามราคาสด** (แยกจากแผน MTF สดที่ยังอัปเดตเสมอ)
+2. **บันทึกผ่าน URL `?watch=`**: Bookmark/Copy Link จากแถบที่อยู่ไว้; เมื่อเปิดลิงก์นั้นบนมือถืออีกครั้ง ระบบดึงแผนเดิมกลับมาและพยายามเลือกเหรียญเดิมอัตโนมัติ ไม่ต้องใช้ฐานข้อมูลหรือบัญชีเสียเงิน **แต่ถ้าเข้าเว็บจากลิงก์หน้าหลักที่ไม่ติด `?watch=` จะไม่เห็นแผนที่ล็อกไว้**
+3. **ตรวจย้อนหลังด้วยแท่ง 15m ที่ปิดจริง**: WAIT_ZONE → WAIT_RECLAIM → WAIT_BREAK → READY_NOW หรือ INVALIDATED / PASSED / EXPIRED. ระบบแยกจุดราคาแตะโซนออกจากการปิดแท่งฟื้นตัวและยืนยัน Break/Retest หลังจากนั้น
+4. **ยกเลิกแผนทันทีเมื่อราคาแตะ Stop Loss หรือปิด 15m ต่ำกว่าขอบล่างโซนสองแท่งติด**; หากข้อมูลแท่งขาด, ราคาสดหาย, MTF/Futures ไม่ผ่าน, แผนหมดอายุ หรือราคาไล่ไปแล้ว จะแสดง WAIT/PASSED แทน READY
+5. **ตรวจราคาปัจจุบันและ R:R อีกครั้ง**: READY_NOW ใช้ราคา Spot ล่าสุดซึ่งอยู่ใกล้โซนและต้องไม่เกินขีดจำกัดไล่ราคา; R:R สุทธิถึง TP2 ต้องผ่านเกณฑ์เดิมอีกครั้ง **ไม่อ้างว่าราคาเข้าโซนเดิมยังซื้อได้หลังตลาดวิ่งออกไปไกล**
+6. **เฝ้าอัตโนมัติเมื่อเปิดเว็บอยู่**: Streamlit รีเฟรชผลทั้งแอปราวทุก 3 นาทีเมื่อ URL มีแผนล็อก ไม่ใช่การติดตามทุกวินาที; **เว็บเองไม่ส่ง Push เมื่อปิด** แต่ v4.1 เพิ่ม **GitHub Actions + Telegram ที่ต้องเปิดใช้งานแยกต่างหาก**
+7. **เวลาหมดอายุ 12/24/48/72 ชั่วโมง**; ข้อมูลของแผนเป็น URL แบบเข้ารหัสเพื่อพกพา (ไม่ได้ปกปิดความลับ ไม่ใช่การเซ็นรับรอง) ไม่บันทึกบัญชีหรือข้อมูลส่วนตัว
+
+**สำคัญ:** กฎ Trigger และวินัยรอหลังแตะโซนของ v4.0 **ยังไม่ได้ผ่าน Backtest/Walk-forward แบบเต็มกฎ** ไม่ควรแปล READY_NOW เป็นคำยืนยันว่าจะกำไรหรือเป็นคำสั่งซื้อ ต้องใช้เงินทดลอง/Paper Trade ก่อน ดูคู่มือ `WATCH_PLAN_GUIDE_TH.md` สำหรับวิธีใช้งานบนมือถือ.
+
+## Orbit Professional v3.0 — หลักฐานตลาดที่ยังคงอยู่ใน v4.1
+
+**เลือกคู่เหรียญครั้งเดียว** แล้วดูสัญญาณ 15m + 1h + 4h + 1d รวมหนึ่งผล พร้อม Entry Zone, Stop Loss, TP1, TP2, เวลาเฝ้ารอ และเหตุผลทุกข้อ. เปิดบน Streamlit Community Cloud ด้วยมือถือได้ ไม่ต้องส่งคำสั่งซื้อขายอัตโนมัติ
+
+เพิ่มจาก v2.7:
+
+1. **Spot CVD / Aggressor Evidence**: คำนวณ Delta จำนวนเหรียญจาก Binance taker-buy volume บน 20 แท่งที่ปิดแล้ว, เทียบแรงซื้อ 5 แท่งกับ 20 แท่ง, ไม่สมมติค่าที่ขาด
+2. **Candle VWAP + Volume Profile POC (ประมาณเท่านั้น)**: คำนวณจากราคากลางแท่งเทียนถ่วงน้ำหนักปริมาณ; ไม่ปลอมเป็น Tick-level Footprint หรือราคาที่ซื้อขายทุกดีล
+3. **Cross-exchange Evidence (Bybit ฟรี)**: ดึง Public Spot Order Book/Trades และ **แยก** USDT Linear Futures OI 24h/Funding โดยระบุขอบเขตตลาดและสถานะที่ขาด; ถ้า API ของ Bybit ไม่รองรับเหรียญหรือถูกจำกัดจะแสดง `MISSING`
+4. **Macro Liquidity จาก DefiLlama Free API**: Stablecoin Circulation และ DeFi TVL ย้อนหลัง 7 วันเมื่อมีข้อมูลใหม่พอ; เป็นข้อมูลภาพรวม ไม่ใช่ Whale wallet/Exchange Netflow
+5. **Net Reward-to-Risk Audit**: ประเมิน R:R ถึง TP1 และ TP2 จากขอบบน Entry Zone รวมค่าธรรมเนียม/Slippage แบบจำลอง โดย TP2 ต้องผ่านเกณฑ์ที่เลือก (เริ่ม 1.5R) ก่อนผลรวมมีสิทธิ์ READY
+6. **Data Source Audit**: นับหลักฐานหลักและเสริมแยกกัน แสดงว่าแหล่งใดใหม่/ขาด/ไม่รองรับ; จำนวนแหล่งไม่ใช่อัตราชนะ
+7. **Paper Journal นำกลับเข้าได้ + ตรวจเส้นทางราคาสมมติ**: ดาวน์โหลด CSV เก็บบนมือถือ/คอมฯ และนำเข้าใหม่ในเซสชันถัดไป; สำหรับ READY ที่บันทึกจะตรวจราคาเปิดแท่ง 1h ถัดไปในโซน แล้วตาม Stop/TP2 สูงสุด 48 แท่งโดยถือว่า Stop เกิดก่อนเมื่อชนพร้อมกัน — **ไม่ใช่การยืนยันว่าซื้อหรือขายจริง**
+8. **ทดสอบด้วย Streamlit จริงแบบข้อมูลจำลองและกรณีแหล่งข้อมูลล้มเหลว** เพิ่มจาก Unit Tests เดิม (ไม่ใช่ผลชนะตลาด)
+
+### ลำดับความน่าเชื่อถือของข้อมูล
+
+| ชั้นหลักฐาน | การใช้งาน |
+|---|---|
+| **Mandatory / Veto** | ประวัติแท่งปิด 4 กรอบ, Spot Quote, Futures สาธารณะที่ใช้กฎเดิม, Binance Book/Trades, BTC Regime, Taker Buy ล่าสุด, แผน Entry และ R:R หลังต้นทุนจำลอง: ขาดหรือไม่ผ่าน = WAIT |
+| **Optional / Independent** | Bybit Spot + Futures, DefiLlama Stablecoin/TVL และ CVD/VWAP/POC เป็นหลักฐานเสริม; ขาด = ระบุ MISSING ไม่แต่งค่าและไม่ทำให้ผ่านมากขึ้น |
+| **Optional / Manual** | CoinGlass ต้องกรอกเองและยืนยันค่า; เมื่อกรอกแล้วไม่ผ่าน/เก่า/ผิดเหรียญ = WAIT |
+| **Unavailable on no-key free plan** | การระบุตัว Whale จริง, Liquidation Heatmap จากทุก Exchange, ประวัติ L2 Book แบบ Tick, Token Unlock/ETF Flow ครบทุกเหรียญ และ Macro Event API ที่เชื่อถือได้พร้อมข้อมูลเก่าเท่ากันทุกตลาด |
+
+**ข้อจำกัดที่สำคัญที่สุด:** Full Final Strategy ยัง **ไม่ได้ผ่านการพิสูจน์ผลตอบแทน Out-of-sample แบบครบกฎ**; `MTF Research` ทดสอบเฉพาะข้อมูล Spot/Entry บางส่วน (ไม่รวม Futures, CVD จาก Tick, Book History, Bybit, DefiLlama และ CoinGlass ย้อนหลัง). แผนใด ๆ อาจขาดทุนได้และไม่มีข้อมูลฟรีที่รับประกันว่าจะเล่นฝั่งเดียวกับเจ้ามือได้จริง. Streamlit Cloud ฟรีไม่ใช่บริการเก็บ Order Book ความถี่สูง 24/7; ต้องเก็บ CSV Paper Journal เอง.
+
+### วิธีอัปเดต GitHub / ใช้บนมือถือ
+
+แตก ZIP → เข้าโฟลเดอร์ `orbit_crypto_signal_lab` → อัปโหลด **ไฟล์ภายในทั้งหมด รวม `.github/workflows/orbit-telegram-monitor.yml`** ไปที่ root ของ GitHub repository เดิมให้ `app.py` อยู่ระดับเดียวกับ `requirements.txt` → Commit → รอ Streamlit Cloud อัปเดต → เปิด URL เดิมบน iPhone/Android. ดู `MONITOR_TELEGRAM_SETUP_TH.md` สำหรับระบบแจ้งเตือน และ `DEPLOY_MOBILE_TH.md` สำหรับเว็บ
+
+**ไฟล์ใหม่สำคัญของ v4.0:** `watch_plans.py`, `WATCH_PLAN_GUIDE_TH.md`, `tests/test_watch_plans.py` และไฟล์จาก v3.0 (`advanced_evidence.py`, `bybit_intelligence.py`, `macro_liquidity.py`, `risk_audit.py`, `journal_utils.py`, `signal_outcomes.py`) ต้องอัปโหลดด้วย โดยเฉพาะ `watch_plans.py` **ต้องอยู่ระดับเดียวกับ `app.py`**
+
+**แหล่งอ้างอิงหลัก:** [Binance Market-Data-Only](https://developers.binance.com/en/docs/products/spot/rest-api), [Bybit Public Trades](https://bybit-exchange.github.io/docs/v5/market/recent-trade), [Bybit OI](https://bybit-exchange.github.io/docs/v5/market/open-interest), [DefiLlama Free API](https://github.com/DefiLlama/api-docs/blob/main/llms-free.txt), [CoinGlass API Auth](https://docs.coinglass.com/reference/authentication)
+
+---
 
 ## ใหม่ใน v2.7 — ตรวจแรงซื้อเชิงรุกและสภาพคล่องก่อน READY
 
@@ -74,7 +136,7 @@ py -m venv .venv
 
 ## สิ่งที่ทำได้จริง
 
-| รายการ | สถานะ v2.7 |
+| รายการ | ความสามารถเดิมที่ยังคงอยู่ใน v4.1 |
 |---|---|
 | ค้นหาคู่เหรียญ Spot ที่อยู่ใน Binance Public Catalog | ได้ (รหัสเหรียญ / ชื่อสามัญบางเหรียญ) |
 | ดึงข้อมูลราคาแบบไม่ต้องมีบัญชีหรือ API Key | ได้ผ่าน Binance public market-data-only API |

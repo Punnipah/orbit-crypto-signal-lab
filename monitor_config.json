@@ -1,0 +1,11 @@
+{
+  "symbols": ["PEPEUSDT", "BTCUSDT", "DOGEUSDT"],
+  "history_candles": 1000,
+  "capital": 10000,
+  "risk_pct": 1.0,
+  "max_allocation_pct": 30,
+  "fee_pct": 0.1,
+  "slippage_pct": 0.05,
+  "min_net_rr": 1.5,
+  "pivot_bars": 3
+}
