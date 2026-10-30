@@ -62,7 +62,6 @@ class FuturesObservation:
     notional_usdt: float | None = None
     net_rr_tp2: float | None = None
     signal_candle: datetime | None = None
-    source: str = "BINANCE"
 
 
 class FuturesDataError(RuntimeError):
@@ -106,12 +105,8 @@ def _read_public(endpoint: str, params: dict | None = None):
     try:
         with urlopen(request, timeout=20) as response:
             return json.load(response)
-    except HTTPError as exc:
-        raise FuturesDataError(f"Binance USD-M API HTTP {exc.code}") from None
-    except (URLError, OSError, TimeoutError) as exc:
-        raise FuturesDataError(f"Binance USD-M API network/timeout ({type(exc).__name__})") from None
-    except ValueError:
-        raise FuturesDataError("Binance USD-M API JSON format ไม่ถูกต้อง") from None
+    except (HTTPError, URLError, OSError, TimeoutError, ValueError) as exc:
+        raise FuturesDataError("Binance USD-M public API ใช้งานไม่ได้") from exc
 
 
 def fetch_futures_catalog() -> set[str]:
@@ -210,8 +205,7 @@ def _format_id(when: pd.Timestamp, direction: str) -> str:
 
 def evaluate_futures(symbol: str, frames: dict[str, pd.DataFrame], *,
                      last: float, mark: float, funding_pct: float,
-                     now: datetime, settings: FuturesSettings,
-                     require_taker_flow: bool = True) -> FuturesObservation:
+                     now: datetime, settings: FuturesSettings) -> FuturesObservation:
     """Return WATCH/READY only for recent confirmed closed-bar events.
 
     Historical pattern matching is not a validated predictive edge or backtest.
@@ -253,12 +247,10 @@ def evaluate_futures(symbol: str, frames: dict[str, pd.DataFrame], *,
         bearish = direction == "SHORT" and candle["close"] < low_break and candle["close"] < candle["open"]
         if not (bullish or bearish):
             continue
-        buy_share = float(candle["taker_buy"] / candle["volume"]) if candle["volume"] > 0 else float("nan")
+        buy_share = float(candle["taker_buy"] / candle["volume"]) if candle["volume"] > 0 else 0.5
         if candle["volume"] / mean_volume < settings.breakout_volume_ratio:
             continue
-        if require_taker_flow and (not math.isfinite(buy_share) or
-                (direction == "LONG" and buy_share < 0.52) or
-                (direction == "SHORT" and buy_share > 0.48)):
+        if (direction == "LONG" and buy_share < 0.52) or (direction == "SHORT" and buy_share > 0.48):
             continue
         candidate = (i, high_break if bullish else low_break)
         break
@@ -326,13 +318,9 @@ def evaluate_futures(symbol: str, frames: dict[str, pd.DataFrame], *,
     else:
         retest = False
     in_zone = entry_low <= last <= entry_high
-    # Alternate exchange candles lack historical taker-side flow. They may
-    # produce a directional WATCH, but NEVER an actionable READY candidate.
-    status = "READY_" + direction if retest and in_zone and require_taker_flow else "WATCH_" + direction
+    status = "READY_" + direction if retest and in_zone else "WATCH_" + direction
     reason = ("15m retest ยืนยันแล้ว ราคา Futures ยังอยู่ใน Entry Zone"
-              if retest and in_zone and require_taker_flow else
-              "Volume breakout เบื้องต้น (ขาด Taker Flow): WATCH เท่านั้น ไม่ใช่จุดเข้า"
-              if not require_taker_flow else
+              if retest and in_zone else
               "Breakout ยืนยันแล้ว รอ retest เข้าโซน; ห้ามไล่ราคา")
     return FuturesObservation(symbol, status, reason, now, direction, setup_id,
                               level, entry_low, entry_high, stop, tp1, tp2, last,

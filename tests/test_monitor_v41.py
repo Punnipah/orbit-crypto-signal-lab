@@ -186,28 +186,6 @@ class AlertTransitionTests(TestCase):
 
 
 class DeliveryTests(TestCase):
-    def test_transient_state_get_retry_then_missing_is_safe(self):
-        from urllib.error import URLError
-        store = GitHubStateStore("example/repo", "test_github_token", "a" * 40)
-        with mock.patch("monitor_delivery.urlopen", side_effect=[
-            URLError("temporary network error"),
-            __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
-                "https://api.github.com", 404, "missing", {}, None),
-        ]) as network, mock.patch("monitor_delivery.time.sleep") as delay:
-            self.assertIsNone(store._request("GET", "/git/ref/heads/orbit-alert-state", missing_ok=True))
-        self.assertEqual(network.call_count, 2)
-        delay.assert_called_once_with(1)
-
-    def test_state_put_is_not_retried_on_ambiguous_network_failure(self):
-        from urllib.error import URLError
-        store = GitHubStateStore("example/repo", "test_github_token", "a" * 40)
-        with mock.patch("monitor_delivery.urlopen", side_effect=URLError("temporary")) as network, \
-             mock.patch("monitor_delivery.time.sleep") as delay:
-            with self.assertRaisesRegex(DeliveryError, "network/DNS"):
-                store._request("PUT", "/contents/state.json", {"content": "test"})
-        network.assert_called_once()
-        delay.assert_not_called()
-
     def test_telegram_rejects_missing_credentials_before_network(self):
         with self.assertRaises(DeliveryError):
             send_telegram("", "123456789", "hello")

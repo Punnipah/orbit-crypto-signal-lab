@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import json
 import re
-import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -75,34 +74,16 @@ class GitHubStateStore:
             "Content-Type": "application/json",
             "User-Agent": "OrbitMonitor/4.1",
         })
-        # Retrying only transient failures keeps the same request/contents hash.
-        # Writes are idempotent at GitHub's contents API, except for a possible
-        # ambiguous success when the server commits but drops the response.
-        # Never retry POST/PUT in that ambiguous case: it could create duplicate
-        # commits or leave uncertain state.
-        retryable = method == "GET"
-        for attempt in range(3 if retryable else 1):
-            try:
-                with urlopen(req, timeout=25) as response:
-                    value = json.load(response)
-                break
-            except HTTPError as exc:
-                if missing_ok and exc.code == 404:
-                    return None
-                if retryable and exc.code in (429, 500, 502, 503, 504) and attempt < 2:
-                    time.sleep(2 ** attempt)
-                    continue
-                if exc.code in (401, 403):
-                    raise DeliveryError(f"GitHub State API HTTP {exc.code}; ตรวจ Actions Workflow permissions (Read and write), branch protection และสิทธิ์ Repository") from None
-                raise DeliveryError(f"GitHub State API HTTP {exc.code}; ตรวจสถานะ GitHub API / ชื่อ State branch") from None
-            except (URLError, TimeoutError, OSError) as exc:
-                if retryable and attempt < 2:
-                    time.sleep(2 ** attempt)
-                    continue
-                reason = "timeout" if isinstance(exc, TimeoutError) else "network/DNS"
-                raise DeliveryError(f"GitHub State API ติดต่อไม่ได้ ({reason}); โปรดลอง Workflow ใหม่ หรือตรวจ githubstatus.com") from None
-            except ValueError:
-                raise DeliveryError("GitHub State API ตอบ JSON ไม่ถูกต้อง") from None
+        try:
+            with urlopen(req, timeout=25) as response:
+                value = json.load(response)
+        except HTTPError as exc:
+            if missing_ok and exc.code == 404:
+                return None
+            raise DeliveryError(f"GitHub State API HTTP {exc.code}; "
+                                "ตรวจสิทธิ์ contents:write และ Actions settings") from None
+        except (URLError, TimeoutError, OSError, ValueError):
+            raise DeliveryError("GitHub State API ติดต่อไม่ได้") from None
         if not isinstance(value, dict):
             raise DeliveryError("GitHub State API ตอบข้อมูลผิดรูปแบบ")
         return value
