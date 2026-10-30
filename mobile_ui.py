@@ -25,6 +25,7 @@ from futures_daytrade import (FuturesDataError, evaluate_futures, fetch_futures_
                               fetch_futures_klines, fetch_futures_ticker,
                               read_futures_settings)
 from futures_paper import paper_stats
+from futures_backup import fetch_backup_pair, fetch_backup_klines, fetch_backup_ticker
 from futures_research import evaluate_historical_proxy, fetch_history
 from futures_symbols import resolve_futures_pair
 from mobile_logic import PAIRS, SignalLook, concise_price, futures_look, normalize_symbol, spot_look
@@ -151,7 +152,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.0</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.2</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -309,16 +310,26 @@ def _futures_catalog() -> set[str]:
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _futures_snapshot(symbol: str, capital: float, risk_pct: float):
-    pair = resolve_futures_pair(symbol, _futures_catalog())
+    now = datetime.now(timezone.utc)
+    source, failure = "BINANCE", ""
+    try:
+        pair = resolve_futures_pair(symbol, _futures_catalog())
+        frames = {tf: fetch_futures_klines(pair.contract, tf, now=now) for tf in ("15m", "1h", "4h")}
+        last, mark, funding = fetch_futures_ticker(pair.contract, now=now)
+    except (FuturesDataError, ValueError, RuntimeError, OSError) as exc:
+        failure = str(exc)[:120]
+        source = "BYBIT_WATCH_ONLY"
+        contract = fetch_backup_pair(symbol)
+        pair = resolve_futures_pair(symbol, {contract})
+        frames = {tf: fetch_backup_klines(contract, tf, now=now) for tf in ("15m", "1h", "4h")}
+        last, mark, funding = fetch_backup_ticker(contract, now=now)
     settings = replace(read_futures_settings(ROOT / "futures_daytrade_config.json"),
                        symbols=(pair.contract,), capital_usdt=capital,
                        risk_per_signal_pct=risk_pct)
-    now = datetime.now(timezone.utc)
-    frames = {tf: fetch_futures_klines(pair.contract, tf, now=now) for tf in ("15m", "1h", "4h")}
-    last, mark, funding = fetch_futures_ticker(pair.contract, now=now)
     result = evaluate_futures(pair.contract, frames, last=last, mark=mark,
-                              funding_pct=funding, now=now, settings=settings)
-    return result, frames["15m"].tail(90)[["close"]], funding, pair
+                              funding_pct=funding, now=now, settings=settings,
+                              require_taker_flow=(source == "BINANCE"))
+    return replace(result, source=source), frames["15m"].tail(90)[["close"]], funding, pair, failure
 
 
 def futures_screen(symbol: str) -> None:
@@ -333,7 +344,7 @@ def futures_screen(symbol: str) -> None:
     risk_pct = st.session_state["orbit_futures_risk"]
     try:
         with st.spinner("กำลังตรวจสัญญาณ Futures 15M / 1H / 4H..."):
-            ob, chart, funding_pct, pair = _futures_snapshot(symbol, capital, risk_pct)
+            ob, chart, funding_pct, pair, failure = _futures_snapshot(symbol, capital, risk_pct)
     except (FuturesDataError, ValueError, RuntimeError, OSError, KeyError, TypeError) as exc:
         _signal_card(futures_look("DATA_UNAVAILABLE", "NONE"), symbol, None, "USD-M FUTURES")
         st.warning("Futures API ไม่พร้อมในขณะนี้ · ไม่แสดงสัญญาณทดแทน")
@@ -345,7 +356,12 @@ def futures_screen(symbol: str) -> None:
             st.rerun()
         return
     look = futures_look(ob.state, ob.direction)
-    _signal_card(look, pair.contract, ob.last_price, "USDⓈ-M PERPETUAL FUTURES")
+    _signal_card(look, pair.contract, ob.last_price,
+                 "BYBIT USDT PERPETUAL · WATCH ONLY" if ob.source != "BINANCE" else "BINANCE USDⓈ-M PERPETUAL")
+    if ob.source != "BINANCE":
+        st.warning("⚠️ Binance ไม่พร้อม (" + failure + ") · แสดง Bybit Futures สำรอง "
+                   "เพื่อเฝ้าดูทิศทางเท่านั้น ไม่ออก READY หรือสัญญาณเข้าซื้อขาย "
+                   "เพราะไม่มีข้อมูล Taker Flow ย้อนหลังที่สูตรเดิมต้องใช้")
     if pair.multiplier != 1:
         st.info(f"สัญญา {pair.contract} = {pair.multiplier:,} {pair.underlying} · "
                 f"ราคาต่อ {pair.underlying} ≈ {concise_price(pair.unit_price(ob.last_price))} USDT · "
