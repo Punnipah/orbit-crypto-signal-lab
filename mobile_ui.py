@@ -103,6 +103,28 @@ div[data-testid="stSegmentedControl"] button {border-radius:14px !important; fon
 div.st-key-orbit_screen {background:#0a1d2be8;border:1px solid #224657;border-radius:18px;padding:6px;backdrop-filter:blur(16px);}
 [data-testid="stVerticalBlockBorderWrapper"] {border-color:#254057;}
 div.stButton > button {min-height:45px; border-radius:13px; font-weight:750;}
+/* Streamlit's light secondary-button defaults were nearly invisible on dark Orbit. */
+div.stButton > button, div.stDownloadButton > button,
+div.stFormSubmitButton > button {
+  background:#163749 !important; color:#efffff !important;
+  border:1px solid #3e7780 !important;
+}
+div.stButton > button p, div.stDownloadButton > button p,
+div.stFormSubmitButton > button p {color:inherit !important;}
+div.stButton > button:disabled, div.stDownloadButton > button:disabled {
+  background:#1d303b !important; color:#a2b4c0 !important;
+  border-color:#374b55 !important; opacity:.75 !important;
+}
+div.stButton > button:hover:not(:disabled), div.stDownloadButton > button:hover:not(:disabled) {
+  background:#1d5c61 !important; border-color:#70e9bb !important;
+}
+div[data-testid="stSegmentedControl"] button,
+div[data-testid="stPills"] button {color:#142b37 !important;}
+div[data-testid="stSegmentedControl"] button[aria-checked="true"],
+div[data-testid="stPills"] button[aria-checked="true"] {
+  background:#174c49 !important; color:#e6fff5 !important;
+  border-color:#55d7ae !important;
+}
 div[data-testid="stExpander"] {border:1px solid #263d4d; border-radius:14px; background:#0d1a28;}
 @media(max-width:640px) {
  .block-container {padding:0.65rem 0.75rem 8rem !important;}
