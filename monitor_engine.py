@@ -27,6 +27,7 @@ from multi_timeframe import RuleCheck, build_timeframe_report
 from public_derivatives import DerivativesDataError, fetch_with_fallback
 from research_engine import prepare_features, with_signal
 from risk_audit import audit_entry
+from rally_watch import RallySettings, evaluate_rally
 from watch_plans import decode_watch, evaluate_watch
 
 
@@ -44,6 +45,20 @@ class MonitorSettings:
     slippage_pct: float = 0.05
     min_net_rr: float = 1.5
     pivot_bars: int = 3
+    rally_watch_above_zone_pct: float = 3.0
+    rally_missed_above_zone_pct: float = 8.0
+    rally_confirmation_bars: int = 2
+    rally_min_volume_ratio: float = 0.8
+    rally_candidate_max_above_new_zone_pct: float = 1.0
+
+    def rally_settings(self) -> RallySettings:
+        settings = RallySettings(self.rally_watch_above_zone_pct,
+                                 self.rally_missed_above_zone_pct,
+                                 self.rally_confirmation_bars,
+                                 self.rally_min_volume_ratio,
+                                 self.rally_candidate_max_above_new_zone_pct)
+        settings.validate()
+        return settings
 
 
 @dataclass(frozen=True)
@@ -66,6 +81,14 @@ class Observation:
     tp2: float | None = None
     trigger_at: datetime | None = None
     failed_checks: tuple[str, ...] = ()
+    opportunity_status: str = "NONE"
+    opportunity_reason: str = ""
+    opportunity_distance_pct: float | None = None
+    opportunity_volume_ratio: float | None = None
+    opportunity_frozen_atr_pct: float | None = None
+    opportunity_confirmed_at: datetime | None = None
+    candidate_low: float | None = None
+    candidate_high: float | None = None
 
 
 def read_settings(path: str | Path) -> MonitorSettings:
@@ -95,6 +118,7 @@ def read_settings(path: str | Path) -> MonitorSettings:
             or not 0 <= settings.fee_pct <= 2 or not 0 <= settings.slippage_pct <= 2
             or not 1 <= settings.min_net_rr <= 2.5):
         raise ValueError("พารามิเตอร์ Monitor อยู่นอกช่วงที่รองรับ")
+    settings.rally_settings()
     return settings
 
 
@@ -245,10 +269,21 @@ def analyze_symbol(symbol: str, settings: MonitorSettings, *,
         plan = decode_watch(token)
         result = evaluate_watch(plan, frames["15m"], now=now, current_price=price,
                                 mtf_buy=verdict.signal == "BUY")
+        rally = evaluate_rally(plan, frames["15m"], now=now, current_price=price,
+                               frozen_status=result.status,
+                               context_ready=(derivatives is not None and micro is not None
+                                              and btc is not None and btc.clean
+                                              and verdict.alignment_index is not None
+                                              and all(check.passed for check in extra[:2])),
+                               live_mtf_ready=verdict.status == "READY",
+                               new_entry=verdict.entry, settings=settings.rally_settings())
         return Observation(symbol, "FROZEN", result.status, now, price,
                            verdict.alignment_index, futures_name, cg_status, result.reason,
                            token, url, plan.entry_low, plan.entry_high, plan.stop_loss,
-                           plan.take_profit_1, plan.take_profit_2, result.triggered_at, failed)
+                           plan.take_profit_1, plan.take_profit_2, result.triggered_at, failed,
+                           rally.status, rally.reason, rally.distance_pct,
+                           rally.volume_ratio, rally.frozen_atr_pct, rally.latest_confirmed_at,
+                           rally.new_entry_low, rally.new_entry_high)
     plan = verdict.entry
     return Observation(symbol, "LIVE_MTF", "MTF_READY" if verdict.status == "READY" else "MTF_WAIT",
                        now, price, verdict.alignment_index, futures_name, cg_status,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 import json
 
@@ -25,11 +26,13 @@ from entry_planner import EntryPlan, plan_entry
 from journal_utils import combine_journal, export_signal_journal, import_signal_journal
 from macro_liquidity import fetch_market_liquidity
 from market_microstructure import fetch_microstructure, microstructure_checks
+from monitor_engine import read_settings
 from mtf_research import historical_mtf_features, mtf_walk_forward, run_mtf_backtest
 from multi_timeframe import RuleCheck, build_timeframe_report
 from public_derivatives import DerivativesDataError, evaluate_derivatives, fetch_with_fallback
 from research_engine import latest_reasons, prepare_features, with_signal
 from risk_audit import audit_entry
+from rally_watch import evaluate_rally
 from signal_outcomes import evaluate_recorded_signals
 from watch_plans import decode_watch, encode_watch, evaluate_watch, new_watch_plan
 
@@ -109,7 +112,8 @@ def plot_prices(f: pd.DataFrame, symbol: str, timeframe: str, plan: EntryPlan | 
 
 
 def render_watch_panel(symbol: str, frozen_plan, proposed_plan: EntryPlan | None,
-                       bars_15m, current_quote, mtf_signal: str):
+                       bars_15m, current_quote, mtf_signal: str, *,
+                       live_mtf_ready: bool = False, context_ready: bool = False):
     """Keep saved prices distinct from the ever-changing live MTF calculation."""
     st.subheader("🧷 แผนเฝ้าดูที่ล็อกไว้ · ย้อนกลับมาเปิดใหม่ได้")
     st.caption("แตะ Entry Zone ≠ ซื้อทันที · ระบบติดตามแท่ง 15m ที่ *ปิดแล้ว* ตั้งแต่เวลาล็อกแผน "
@@ -153,6 +157,23 @@ def render_watch_panel(symbol: str, frozen_plan, proposed_plan: EntryPlan | None
                 st.error(f"**{label}** · {result.reason}")
             else:
                 st.info(f"**{label}** · {result.reason}")
+            # Price-escape advisories are separate from the original Frozen
+            # entry trigger. They NEVER move the frozen entry/SL/TP.
+            rally_rules = read_settings(Path(__file__).with_name("monitor_config.json")).rally_settings()
+            rally = evaluate_rally(frozen_plan, bars_15m,
+                                   now=datetime.now(timezone.utc), current_price=current_quote,
+                                   frozen_status=result.status, context_ready=context_ready,
+                                   live_mtf_ready=live_mtf_ready,
+                                   new_entry=proposed_plan, settings=rally_rules)
+            if rally.status == "BREAKOUT_WATCH":
+                st.warning("🚀 **ราคาเริ่มวิ่งหนี Frozen Zone** · " + rally.reason)
+            elif rally.status == "MISSED_ENTRY":
+                st.warning("🟠 **โอกาสในแผนเดิมอาจผ่านไปแล้ว** · " + rally.reason)
+            elif rally.status == "NEW_SETUP_CANDIDATE":
+                st.info("🔄 **มีโซน MTF สดใหม่ให้ตรวจสอบ** · " + rally.reason)
+                st.caption(f"โซนใหม่เพื่อ *พิจารณาเท่านั้น*: "
+                           f"{format_price(rally.new_entry_low)}–{format_price(rally.new_entry_high)} USDT "
+                           "· หากต้องการใช้ต้องล็อกแผนใหม่และอัปเดต GitHub Secret เอง")
             for text_label, date_time in (("แตะโซน", result.touched_at),
                                           ("แท่ง Reclaim", result.reclaimed_at),
                                           ("Trigger ยืนยัน", result.triggered_at)):
@@ -265,23 +286,29 @@ def coin_glass_panel(base_asset: str):
     return snapshot
 
 
-st.set_page_config(page_title="Orbit Crypto Signal Lab", page_icon="🪐", layout="wide")
-st.markdown("""
-<style>
-/* Keep touch targets and charts readable in mobile Safari and Chrome. */
-@media (max-width: 640px) {
-  .block-container { padding-top: 0.8rem; padding-left: 0.65rem; padding-right: 0.65rem; }
-  h1 { font-size: 1.65rem !important; }
-  h2 { font-size: 1.35rem !important; }
-  div[data-testid="stMetricValue"] { font-size: 1.32rem; }
-  div[data-testid="stMetricLabel"] { font-size: 0.82rem; }
-  div[data-testid="stDataFrame"] { max-width: 100%; }
-}
-</style>
-""", unsafe_allow_html=True)
-st.title("🪐 Orbit Crypto Signal Lab")
-st.caption("Orbit v4.1 · Frozen Watch + Telegram 15m Monitor (ตั้งค่า GitHub ก่อน) · MTF + Futures + CoinGlass เสริม · ไม่ส่งออเดอร์")
-st.info("📱 มือถือ: แตะเมนู **>** มุมซ้ายบนเพื่อค้นหาเหรียญ/ตั้งค่าความเสี่ยง แล้วปิดเมนูเพื่อดูกราฟ · ข้อมูล CoinGlass ที่กรอกจะอยู่เฉพาะในเซสชันนี้")
+st.set_page_config(page_title="Orbit 5 · Spot & Futures", page_icon="🪐",
+                   layout="wide", initial_sidebar_state="collapsed")
+# v5.0 MOBILE-FIRST: quick Spot, real USD-M Futures, and PAPER tracker each have
+# read-only mobile cards. The entire original analysis/research workflow below
+# remains available through Lab; none of its calculations are replaced.
+import mobile_ui
+
+mobile_ui.style()
+screen = mobile_ui.top_navigation()
+if screen != mobile_ui.LAB:
+    if screen == mobile_ui.ALERTS:
+        mobile_ui.alerts_screen()
+    else:
+        active_symbol = mobile_ui.chosen_symbol(st.query_params.get("watch"))
+        if screen == mobile_ui.FUTURES:
+            mobile_ui.futures_screen(active_symbol)
+        else:
+            mobile_ui.spot_screen(active_symbol, st.query_params.get("watch"))
+    st.stop()
+
+st.markdown("## 🔬 Orbit Lab")
+st.caption("กราฟเต็ม · Frozen Watch · CoinGlass · Backtest · Walk-forward · Telegram · Futures Research")
+mobile_ui.research_futures_panel()
 
 frozen_watch = None
 watch_query_error = None
@@ -303,8 +330,8 @@ elif frozen_watch is not None:
 else:
     st.session_state.pop("orbit_watch_loaded_token", None)
 
-with st.sidebar:
-    st.header("ค้นหาเหรียญ")
+with st.expander("⚙️ เลือกเหรียญและตั้งค่าการวิเคราะห์", expanded=False):
+    st.subheader("ค้นหาเหรียญ")
     try:
         catalog = get_catalog()
     except PublicDataError as exc:
@@ -622,7 +649,11 @@ def render_multi_timeframe_dashboard():
 
     plan = verdict.entry
     render_watch_panel(symbol, frozen_watch, plan, frame_bars.get("15m"),
-                       spot_quote, verdict.signal)
+                       spot_quote, verdict.signal, live_mtf_ready=verdict.status == "READY",
+                       context_ready=(derivatives is not None and micro is not None
+                                      and btc_context is not None and btc_context.clean
+                                      and verdict.alignment_index is not None
+                                      and all(check.passed for check in extra[:2])))
     st.divider()
     st.subheader("🎯 แผน MTF สด (คำนวณใหม่ตามแท่ง 1h — ไม่ใช่แผนที่ล็อกไว้)")
     if risk_audit.rr_tp2 is not None:
@@ -666,7 +697,7 @@ def render_multi_timeframe_dashboard():
                     for blocker in reports[tf].coinglass_blockers:
                         st.warning(f"CoinGlass ({tf}): {blocker}")
 
-    st.caption("Orbit v4.1 เป็นสูตรทดลอง: Trigger หลังแตะโซนและ Frozen Watch Plan ยังไม่มีสถิติ Backtest/Walk-forward แบบเต็ม · Telegram เป็นตัวแจ้งเตือนแยกเมื่อเปิด GitHub Actions · ไม่ส่งออเดอร์")
+    st.caption("Orbit v4.3 ใช้กฎ Spot v4.2: Rally Escape เป็นเพียงการเตือนราคาวิ่งหนี ไม่ใช่ BUY · Frozen Trigger ยังไม่ผ่าน Full Walk-forward · Telegram แยกที่ GitHub Actions · ไม่ส่งออเดอร์")
     st.divider()
     st.subheader("📝 บันทึกสัญญาณสำหรับติดตามผลจริง (Paper Journal)")
     if st.button("💾 บันทึกสัญญาณ MTF นี้ไว้ตรวจภายหลัง", width="stretch"):
@@ -975,7 +1006,7 @@ with tabs[4]:
 
 with tabs[5]:
     st.markdown("""
-    ### Orbit v4.1 — วิธีใช้
+    ### Orbit v4.3 Lab — วิธีใช้ขั้นสูง
     1. เลือกสกุลราคา แล้วพิมพ์รหัสเหรียญ (เช่น `BTC` หรือ `XRP`) ในแถบซ้าย
     2. เปิด **🎯 สัญญาณ MTF รวม** เพื่อวิเคราะห์ 15m+1h+4h+1d, Order Book, Taker Buy, BTC Market Regime, Futures สาธารณะ รวมทั้ง CVD/VWAP, Bybit และ DefiLlama ที่รองรับ แล้วสรุปผล **เป็นชุดเดียว**
     3. อ่าน **คะแนนความสอดคล้องถ่วงน้ำหนัก** (ไม่ใช่โอกาสทำกำไร) พร้อม Entry Zone / SL / TP และ **R:R หลังต้นทุนจำลอง** โดยอิงกรอบ 1h ชุดเดียว
@@ -999,7 +1030,7 @@ with tabs[5]:
     - ข้อมูลอนุพันธ์มาจาก Kraken Perpetual USD, Binance USDⓈ-M Futures หรือ Bybit USDT Linear Futures เฉพาะเหรียญที่รองรับ; เป็นข้อมูลตลาดเดียวที่ระบุชัด ไม่ใช่ CoinGlass
     - ไม่ได้รับข้อมูล Liquidations 24h ครบจาก Public API ที่ใช้ จึงไม่ใช้ใน Auto Signal
     - ข้อมูลจาก Binance Spot อาจไม่ตรงกับตลาดที่ผู้ใช้ซื้อขายจริง รวมถึงอาจถูกจำกัดการเข้าถึงบางเครือข่าย/ภูมิภาค
-    - ไม่มีการส่งออเดอร์, ไม่มีการใช้ Leverage, ไม่มีการเปิด Short และไม่มีแจ้งเตือน Push ในรุ่นนี้
+    - ไม่มีการส่งออเดอร์หรือกำหนด Leverage; หน้า Spot ไม่ให้คำสั่ง Short แต่หน้า Futures v4.3 สามารถแสดงสัญญาณ Long/Short แบบอ่านข้อมูลอย่างเดียว; หากต้องการ Telegram ตอนปิดเว็บต้องติดตั้ง GitHub Actions แยก
     - แผนที่ล็อกไว้เก็บใน URL เท่านั้น ไม่มีฐานข้อมูลส่วนตัว; ต้องเก็บลิงก์ `?watch=` ไว้เอง และไม่ต้องกรอก API Key; หากปิดหน้าเว็บไม่มี background polling
     - กฎ Trigger ของ v4.0 เป็น heuristic ใหม่: แท่ง 15m ปิดเหนือโซน + Volume, แล้ว Break/Retest และ MTF ผ่าน ไม่ได้พิสูจน์ว่าจับจุดต่ำสุดหรือทำกำไรได้; การเริ่มเฝ้าดูระหว่างแท่งจะไม่นับแท่งที่ยังไม่ปิดย้อนหลัง
     - Market Structure เป็น Pivot/BOS/Sweep ตามกฎ ไม่ได้ครอบคลุมข่าว, On-chain, Order Book History หรือระบบสถาบันทั้งหมด
@@ -1008,17 +1039,18 @@ with tabs[5]:
     """)
 
 with tabs[6]:
-    st.subheader("📡 Orbit v4.1 — Telegram แจ้งเตือนทุก 15 นาที")
+    st.subheader("📡 Telegram Monitor — Spot v4.2 / Futures Day Trade v1")
     st.info("**ต้องตั้งค่า GitHub Actions และ Telegram เพียงครั้งแรกก่อน** · การเปิดแอปนี้ไม่ได้เปิดตัวตรวจเบื้องหลังให้เอง")
     st.markdown("""
-    1. แตก ZIP v4.1 แล้วอัปโหลดไฟล์ `.github/workflows/orbit-telegram-monitor.yml`, `alert_monitor.py`, `monitor_engine.py`, `monitor_alerts.py`, `monitor_delivery.py` และไฟล์ `monitor_*` ทั้งหมดไปที่ root ของ GitHub เดิม
+    1. หากอัปเกรดจาก v4.1 ให้อัปโหลด `app.py`, `rally_watch.py`, `alert_monitor.py`, `monitor_engine.py`, `monitor_alerts.py` ไปที่ root ของ GitHub เดิม (ไม่ต้องสร้าง Bot หรือ Secrets ใหม่; `monitor_config.json` ของเดิมใช้ต่อได้)
     2. สร้างบอท Telegram ด้วย **@BotFather** แล้วเริ่มแชตกับบอทเพื่ออนุญาตให้ส่งข้อความ
     3. เพิ่ม GitHub **Actions Secrets** `TELEGRAM_BOT_TOKEN` และ `TELEGRAM_CHAT_ID` (ห้ามส่ง Token ในแชตหรือใส่ลงไฟล์ GitHub)
     4. เปิด GitHub **Actions → Orbit Telegram Signal Monitor → Run workflow** เลือก **Send test** เพื่อทดสอบข้อความ
     5. หากต้องการใช้ **Entry Zone ที่ล็อกไว้** ให้คัดลอกลิงก์จากด้านล่าง แล้วบันทึกเป็น Secret `ORBIT_WATCH_LINKS` ทีละบรรทัด เช่น `PEPEUSDT=ลิงก์แผน`; ถ้าไม่ใส่ ระบบตรวจเฉพาะ MTF สดและจะบอกชัดว่า *ยังไม่มีแผนล็อก*
     6. ข้อมูล CoinGlass ต้องกรอกเอง และสามารถนำค่าที่บันทึกไปเติมใน `monitor_coinglass_manual.json` (ถ้าเก่าเกิน 1 ชม. จะเป็นตัวกรองไม่ผ่าน)
+    7. หากราคา **พุ่งหนีโซนโดยไม่เคยแตะ** จะมี `BREAKOUT_WATCH` / `MISSED_ENTRY` เฉพาะเมื่อแท่งปิด 15m และ Volume ยืนยัน; `NEW_SETUP_CANDIDATE` ต้องมี MTF สด READY และโซนใหม่ที่ไม่ไล่ราคา (ทั้งหมดไม่ใช่ BUY)
 
-    คู่มือไทยโดยละเอียดอยู่ใน ZIP: **`MONITOR_TELEGRAM_SETUP_TH.md`**
+    คู่มือไทยโดยละเอียดอยู่ใน ZIP: **`UPGRADE_V42_TH.md`** และ **`MONITOR_TELEGRAM_SETUP_TH.md`**
     """)
     current_token = st.query_params.get("watch")
     if frozen_watch is not None and current_token and frozen_watch.symbol == symbol:

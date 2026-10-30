@@ -1,4 +1,6 @@
-# ตั้งค่า Orbit v4.1 — Telegram แจ้งสัญญาณ PEPE / BTC / DOGE ทุก 15 นาที (วิธีฟรี)
+# ตั้งค่า Orbit v4.2 — Telegram แจ้งสัญญาณ PEPE / BTC / DOGE ทุก 15 นาที (วิธีฟรี)
+
+**ถ้าพรรณติดตั้ง v4.1 และรับ Telegram Test สำเร็จแล้ว ไม่ต้องทำขั้นตอนสร้าง Bot ใหม่:** อ่าน `UPGRADE_V42_TH.md` เพื่ออัปโหลดเฉพาะไฟล์ที่เปลี่ยน โดยคง `ORBIT_WATCH_LINKS` และ State branch เดิมไว้
 
 เวอร์ชันนี้มี **2 ส่วนแยกกัน**:
 
@@ -125,6 +127,9 @@
 | `NO_LONGER_READY` | สัญญาณ READY ที่เคยแจ้งกลับเป็น WAIT |
 | `DATA_UNAVAILABLE` | ดึงข้อมูลสำคัญไม่ได้ 2 รอบติด (ไม่ส่ง BUY จากข้อมูลที่หาย) |
 | `COINGLASS_STALE` | Manual CoinGlass มีอยู่แต่ไม่ผ่าน/หมดอายุ |
+| `BREAKOUT_WATCH` | ราคา Spot วิ่งเหนือ Frozen Entry Zone พร้อมแท่ง 15m ปิดและ Volume ผ่าน — **ไม่ใช่ BUY** |
+| `MISSED_ENTRY` | ราคาวิ่งหนีโซนเดิมมากแล้ว — **ไม่ไล่ราคา ไม่เลื่อนโซน** |
+| `NEW_SETUP_CANDIDATE` | MTF สด READY และมีโซนใหม่ให้มนุษย์กลับไปตรวจเอง; ไม่มีการล็อกแผน/เปลี่ยน Secret อัตโนมัติ |
 
 ไม่ส่งข้อความทุก 15 นาทีเพราะราคาไม่เปลี่ยนสถานะ. เก็บสถานะข้ามรอบใน GitHub Branch ชื่อ `orbit-alert-state` ซึ่งระบบสร้างเองและ **ไม่มี Bot Token, Chat ID หรือ watch token ใน State**. อย่าลบ Branch นี้ถ้าต้องการคงระบบป้องกันข้อความซ้ำ
 

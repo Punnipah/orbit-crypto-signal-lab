@@ -7,5 +7,10 @@
   "fee_pct": 0.1,
   "slippage_pct": 0.05,
   "min_net_rr": 1.5,
-  "pivot_bars": 3
+  "pivot_bars": 3,
+  "rally_watch_above_zone_pct": 3.0,
+  "rally_missed_above_zone_pct": 8.0,
+  "rally_confirmation_bars": 2,
+  "rally_min_volume_ratio": 0.8,
+  "rally_candidate_max_above_new_zone_pct": 1.0
 }

@@ -75,6 +75,7 @@ def scan_all(settings, watches, coinglass, *, now: datetime) -> list:
                                       watch_token=watch[0] if watch else None)
         observations.append(observation)
         _log(f"{symbol} | mode={observation.mode} | status={observation.status} "
+             f"| rally={observation.opportunity_status} "
              f"| futures={'OK' if observation.futures_source != 'MISSING' else 'MISSING'} "
              f"| CoinGlass={observation.coinglass_status}")
     return observations
@@ -82,7 +83,7 @@ def scan_all(settings, watches, coinglass, *, now: datetime) -> list:
 
 def run_monitor(*, dry_run: bool = False) -> int:
     settings, watches, coinglass = _load_inputs()
-    _log(f"Orbit v4.1 scanning {', '.join(settings.symbols)} | "
+    _log(f"Orbit v4.2 scanning {', '.join(settings.symbols)} | "
          f"Frozen links {len(watches)}/{len(settings.symbols)} | CoinGlass manual {len(coinglass)}")
     if not dry_run:
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -98,22 +99,26 @@ def run_monitor(*, dry_run: bool = False) -> int:
         state = empty_state()
     observations = scan_all(settings, watches, coinglass, now=datetime.now(timezone.utc))
     transition(state, observations)
+    _log(f"Important Telegram events pending after dedupe: {len(state['pending'])}")
     if dry_run:
         _log(f"DRY RUN: {len(state['pending'])} important changes (no Telegram/GitHub writes)")
         for row in state["pending"]:
             _log(f"Would notify: {row['text'].splitlines()[1]}")
         return 0
     store.save(state)  # Outbox persisted BEFORE send; avoids lost unsent alerts.
+    sent_count = 0
     for pending in list(state["pending"]):
         send_telegram(token, chat_id, pending["text"])
+        sent_count += 1
         remove_sent(state, pending["id"])
         store.save(state)  # One ack per successful send; retries after failure.
-    _log("Completed. Telegram delivered/queued, no exchange orders sent.")
+    _log(f"Completed. Telegram messages sent: {sent_count}; pending: {len(state['pending'])}; "
+         "no exchange orders sent.")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Orbit v4.1 read-only Telegram monitor")
+    parser = argparse.ArgumentParser(description="Orbit v4.2 read-only Telegram monitor")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--test-telegram", action="store_true")
     group.add_argument("--dry-run", action="store_true")
@@ -123,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.test_telegram:
             send_telegram(os.environ.get("TELEGRAM_BOT_TOKEN", ""),
                           os.environ.get("TELEGRAM_CHAT_ID", ""),
-                          "✅ Orbit v4.1 Telegram Test สำเร็จ\n"
+                          "✅ Orbit v4.2 Telegram Test สำเร็จ\n"
                           "ข้อความนี้ใช้ตรวจช่องทางแจ้งเตือนเท่านั้น ไม่ใช่สัญญาณซื้อ")
             _log("Telegram test delivered.")
             return 0

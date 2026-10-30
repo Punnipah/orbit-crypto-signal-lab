@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from display_format import format_price
 from monitor_engine import Observation
+from rally_watch import IMPORTANT_RALLIES
 
 
 IMPORTANT = {"READY_NOW", "MTF_READY", "INVALIDATED", "PASSED", "EXPIRED"}
@@ -65,6 +66,9 @@ def build_message(observation: Observation, kind: str) -> str:
         "COINGLASS_STALE": "⚠️ CoinGlass ที่กรอกเก่า/ใช้ไม่ได้",
         "DATA_UNAVAILABLE": "⚠️ ดึงข้อมูลสำคัญไม่ได้สองรอบติด",
         "RECOVERED": "✅ ระบบดึงข้อมูลกลับมาทำงานได้",
+        "BREAKOUT_WATCH": "🚀 ราคาวิ่งเหนือ Frozen Zone — เฝ้าดู ไม่ไล่ซื้อ",
+        "MISSED_ENTRY": "🟠 ราคาหนี Entry Zone — ไม่ย้ายโซนตาม",
+        "NEW_SETUP_CANDIDATE": "🔄 พบแผน MTF สดใหม่ที่ควรตรวจด้วยตนเอง",
     }
     if kind not in titles:
         raise ValueError("เหตุแจ้งเตือนไม่รองรับ")
@@ -78,17 +82,31 @@ def build_message(observation: Observation, kind: str) -> str:
         parts.append(f"Stop: {_fmt(observation.stop_loss)} · TP1: {_fmt(observation.tp1)} · TP2: {_fmt(observation.tp2)}")
     if observation.alignment is not None:
         parts.append(f"MTF Alignment: {observation.alignment:.1f}/100 (ไม่ใช่ Win Rate)")
+    if kind in IMPORTANT_RALLIES:
+        if observation.opportunity_distance_pct is not None:
+            parts.append(f"ราคาเหนือ Frozen Zone: {observation.opportunity_distance_pct:.2f}%")
+        if observation.opportunity_volume_ratio is not None:
+            parts.append(f"15m Volume เทียบค่าเฉลี่ยก่อนหน้า: {observation.opportunity_volume_ratio:.2f} เท่า")
+        if observation.opportunity_frozen_atr_pct is not None:
+            parts.append(f"15m ATR ก่อนล็อกแผน: {observation.opportunity_frozen_atr_pct:.2f}%")
+        if observation.opportunity_confirmed_at is not None:
+            parts.append(f"แท่งปิดล่าสุดที่ยืนยัน: {observation.opportunity_confirmed_at.astimezone(BKK):%d/%m %H:%M} น. (ไทย)")
+        if observation.candidate_low is not None and observation.candidate_high is not None:
+            parts.append(f"โซน MTF สดใหม่เพื่อ *ตรวจสอบ*: {_fmt(observation.candidate_low)}–{_fmt(observation.candidate_high)}")
     parts.append(f"Futures: {observation.futures_source[:140]}")
     parts.append(f"CoinGlass Manual: {observation.coinglass_status}")
     parts.append(f"สถานะปัจจุบัน: {observation.status}")
     if observation.trigger_at is not None:
         label = "แท่ง Trigger ปิด" if observation.mode == "FROZEN" else "แท่ง 15m ที่อ้างอิงปิด"
         parts.append(f"{label}: {observation.trigger_at.astimezone(BKK):%d/%m %H:%M} น. (ไทย)")
-    parts.append("เหตุผล: " + observation.reason[:340])
+    parts.append("เหตุผล: " + (observation.opportunity_reason if kind in IMPORTANT_RALLIES
+                           else observation.reason)[:340])
     if observation.failed_checks and kind in {"NO_LONGER_READY", "DATA_UNAVAILABLE"}:
         parts.append("ยังไม่ผ่าน: " + ", ".join(observation.failed_checks[:4])[:200])
     if observation.mode == "FROZEN":
         parts.append("เปิด Bookmark แผนล็อกเดิมที่มี ?watch= ก่อนตัดสินใจ")
+        if kind in IMPORTANT_RALLIES:
+            parts.append("🔒 แผนล็อกเดิมไม่เปลี่ยน · ไม่มีคำสั่งซื้อ · หากต้องการแผนใหม่ต้องล็อกเองและอัปเดต ORBIT_WATCH_LINKS")
     else:
         parts.append("ยังไม่มี Frozen Watch ของคู่นี้; สัญญาณ MTF สดอาจเปลี่ยนทุกครั้ง")
     parts.append("⚠️ เป็นสัญญาณทดลอง ไม่รับประกันผล และไม่มีการส่งออเดอร์")
@@ -111,9 +129,15 @@ def transition(state: dict, observations: list[Observation]) -> dict:
             # fresh-looking buy notification after the signal disappeared.
             state["pending"] = [row for row in state["pending"] if not (
                 row["symbol"] == ob.symbol and row["kind"] in READY)]
+        # An old rally message must not be delivered after the price has
+        # reverted, the frozen plan expires, or the available evidence changes.
+        state["pending"] = [row for row in state["pending"] if not (
+            row["symbol"] == ob.symbol and row["kind"] in IMPORTANT_RALLIES
+            and row["kind"] != ob.opportunity_status)]
         ids = {notice["id"] for notice in state["pending"]}
         prev_status = old.get("status")
         prev_cg = old.get("coinglass")
+        prev_opportunity = old.get("opportunity", "NONE")
         source_problem = (ob.status == "DATA_UNAVAILABLE" or ob.futures_source == "MISSING"
                           or ob.last_price is None
                           or "สภาพคล่อง Spot" in ob.failed_checks
@@ -131,6 +155,11 @@ def transition(state: dict, observations: list[Observation]) -> dict:
             queued.append((event_id, ob.status))
             if ob.status in READY:
                 last_ready_id = event_id
+        if (ob.mode == "FROZEN" and ob.status == "WAIT_ZONE"
+                and ob.opportunity_status in IMPORTANT_RALLIES
+                and ob.opportunity_status != prev_opportunity):
+            queued.append((_event_id(ob.symbol, fp, ob.opportunity_status),
+                           ob.opportunity_status))
         if prev_status in READY and ob.status not in IMPORTANT and ob.status != "DATA_UNAVAILABLE":
             queued.append((_event_id(ob.symbol, fp, "NO_LONGER_READY", last_ready_id or ""),
                            "NO_LONGER_READY"))
@@ -154,6 +183,7 @@ def transition(state: dict, observations: list[Observation]) -> dict:
         state["symbols"][ob.symbol] = {
             "plan_fingerprint": fp,
             "status": ob.status,
+            "opportunity": ob.opportunity_status if ob.mode == "FROZEN" else "NONE",
             "coinglass": ob.coinglass_status,
             "errors": err_count,
             "last_ready_id": last_ready_id,

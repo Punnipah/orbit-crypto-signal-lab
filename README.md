@@ -1,6 +1,43 @@
-# Orbit Crypto Signal Lab v4.1 — Telegram 15m Monitor + Frozen Watch Plan + MTF
+# Orbit Crypto Signal Lab v5.0 Ultimate — Mobile App + Spot + Futures + Paper Tracker
 
 โปรแกรมวิเคราะห์สัญญาณคริปโตแบบอ่านข้อมูลอย่างเดียว ใช้เครื่องมือฟรี ไม่เชื่อมบัญชีซื้อขาย **ไม่ต้องใช้ API Key ของกระดานเทรด** และไม่มีคำสั่งส่งออเดอร์ (ระบบ Telegram ใช้ Bot Token ส่วนตัวใน GitHub Secrets)
+
+## v5.0 Ultimate — สรุปส่วนที่เพิ่มจาก v4.3
+
+- **Mobile UI:** หน้า `Spot / Futures / Alerts / Lab` ดีไซน์เน้นมือถือ มีการ์ดใหญ่ โทนมืดเขียวฟ้า และเมนูติดขอบล่างบนจอแคบ (ขึ้นกับ Streamlit frontend/version)
+- **Futures Symbol Resolver:** ค้น `PEPE`/`PEPEUSDT` แล้วตรวจสัญญาจริง `1000PEPEUSDT` จาก Public Catalog โดยไม่เอาราคาต่อ 1,000 PEPE ไปปนกับราคา Spot
+- **Futures Telegram Paper Tracker:** เก็บ `PAPER_ENTRY`, `TP1`, `TP2`, `STOP`, `NO_FILL_EXPIRED`, `TIME_EXIT` แยกจากสถานะ LIVE; เริ่มนับแท่งปิด **หลัง** READY, คิด STOP ก่อน TP เมื่ออยู่แท่งเดียวกัน, ประเมิน R แบบประมาณการต้นทุนและ **ไม่รวม Funding จริง**
+- **Futures Health:** บันทึกเวลาตรวจล่าสุด/จำนวนคู่ข้อมูลผ่าน และแจ้ง `DOWN`/`DEGRADED`/`RECOVERED` เมื่อสถานะเปลี่ยน
+- **Alerts & Paper Results:** แสดงประวัติ Futures จาก GitHub State Branch เมื่อ Repository เป็นสาธารณะ หรืออัปโหลด JSON เองเมื่อเป็น Private; Win Rate, Expectancy, Profit Factor, Drawdown แสดงเป็น **Paper Estimate** เท่านั้น
+- **Futures Historical Proxy:** ปุ่มทดลองย้อนหลัง 30/45/60 วันใน Lab ใช้กฎเทคนิคเดียวกับ Futures แต่ **ไม่มี Historical Mark/Funding/Order Book** และเป็น Holdout ตามเวลา ไม่ใช่ Full Backtest/Walk-forward ของระบบจริง
+- **เก็บ Spot/Frozen/Rally/Telegram เดิม:** การล็อกแผน Spot และลิงก์ `ORBIT_WATCH_LINKS` ยังทำงานตามแนวคิดเดิม ไม่ย้ายราคาอัตโนมัติ
+
+อ่านขั้นตอนติดตั้งและข้อจำกัดทั้งหมดใน `UPGRADE_V50_TH.md`.
+
+**Release status:** Engineering release candidate; ผ่าน Unit Tests แต่ยังต้องทดสอบ GitHub/Telegram/Streamlit บนบัญชีและมือถือจริง และต้องเก็บ Paper Forward ระยะยาวก่อนนำผลไปตัดสินใจเสี่ยงเงิน Futures. ป้าย `READY` เป็น candidate ไม่ใช่คำแนะนำซื้อขายที่พิสูจน์แล้ว.
+
+## ใหม่ v4.3 — หน้าแอปมือถือ + Futures Day Trade แบบแยก Spot
+
+- หน้าจอ Mobile-first: เลือก **Spot / Futures / Lab** ด้วยปุ่มใหญ่, เลือกเหรียญได้ทั้งเหรียญยอดนิยมและค้นหาคู่ USDT อื่น ๆ
+- หน้า Spot แสดงราคาล่าสุด สถานะ `WAIT`/`READY`/`INVALIDATED`, Entry Zone/Stop/TP และ Rally Alert แบบการ์ดกระชับ; กฎ Spot/Frozen v4.2 ไม่เปลี่ยน
+- หน้า Futures เป็น **ข้อมูล USDⓈ-M Perpetual จริง** วิเคราะห์โอกาส Long และ Short จาก 4H+1H Trend และแท่ง 15m Breakout → Retest; WATCH ยังห้ามเข้า, READY ต้องยืนยันและราคายังอยู่โซน
+- ดูกราฟ Futures, ระดับราคา, ทุนและความเสี่ยงจำลอง; ส่วน CoinGlass, Backtest, Walk-forward และกฎละเอียดเดิมอยู่ใน Lab
+- Telegram Futures ใช้ Workflow ใหม่ `.github/workflows/orbit-futures-daytrade.yml` และ GitHub state branch `orbit-futures-state` แยกจาก Spot แต่ใช้ Telegram Secrets เดิมได้
+- **ยังไม่ผ่าน Futures Strategy Walk-forward / Live Test**: สัญญาณเป็นแค่ Candidate ไม่รับประกันผลตอบแทน; การเทรดฟิวเจอร์สมีโอกาสขาดทุนมากรวมถึง Liquidation เมื่อใช้ Leverage
+
+**หากยังอยู่ v4.1 ไม่จำเป็นต้องติดตั้ง v4.2 แยกก่อน** อัปเกรด v4.3 แบบรวมได้เลยตาม `UPGRADE_V43_TH.md`. ฝั่ง GitHub Actions ของ Spot ไม่จำเป็นต้องเปลี่ยน Cron หรือ Secrets เดิม.
+
+## ใหม่ v4.2 — รู้ทันเมื่อราคาพุ่งหนี Entry Zone โดยไม่ไล่ซื้อ
+
+- **รักษา Frozen Watch Plan เดิมทุกประการ** ไม่เลื่อน Entry, Stop Loss, TP หรือวันหมดอายุ ไม่สร้างคำสั่งซื้อขาย
+- **BREAKOUT_WATCH**: ราคาอยู่เหนือขอบบนโซนล็อกอย่างมีนัยสำคัญ (พื้นฐานอย่างน้อย 3% และปรับตาม 1.5× ATR 15m *ก่อนล็อก*) ต้องมีอย่างน้อย 2 แท่ง 15m ที่ปิดแล้วต่อเนื่องเหนือเกณฑ์ และมี Volume อย่างน้อย 0.8 เท่าของค่าเฉลี่ย 20 แท่งก่อนหน้า
+- **MISSED_ENTRY**: ราคาอยู่เหนือโซนมากขึ้น (พื้นฐานอย่างน้อย 8% หรือ 3× ATR 15m ก่อนล็อก แล้วแต่ค่าใดสูงกว่า) พร้อมหลักฐานแท่งปิดและ Volume; เป็น **การเตือนว่าอย่าไล่ราคา** ไม่ใช่ BUY
+- **NEW_SETUP_CANDIDATE**: มี Entry Zone ใหม่ที่สูงกว่าเดิมจริง สัญญาณ MTF สดผ่าน READY และราคายังไม่อยู่สูงเหนือโซนใหม่เกินกฎ; แจ้งเพื่อให้ **ผู้ใช้กลับมารีวิวและล็อกเอง** ไม่อัปเดต GitHub Secret ให้เอง
+- **ป้องกันการแจ้งผิด**: ไม่ส่งจาก Spot tick กระโดดเพียงครั้งเดียว, แท่งยังไม่ปิด, Volume ไม่ผ่าน, ข้อมูลเก่าหรือขาด, Order Book/Trades/BTC/Futures หลักไม่พร้อม หรือ Frozen เดิมไม่อยู่ใน `WAIT_ZONE`
+- **ไม่รบกวน**: แจ้งเหตุสำคัญแต่ละประเภทสูงสุดหนึ่งครั้งต่อแผนล็อกเดิม; เมื่อราคาย่อลงหรือแผนหมดอายุจะทิ้งข้อความ Price Escape ที่ยังค้างส่ง ไม่ส่ง BUY เก่า
+- **ยังใช้ GitHub Actions และ Secret เดิมได้**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ORBIT_WATCH_LINKS`; State branch v4.1 เดิมอ่านต่อได้โดยไม่ลบข้อมูล
+
+**สำหรับผู้ที่ติดตั้ง v4.1 ไว้แล้ว:** เปิด `UPGRADE_V42_TH.md` และอัปเดตเฉพาะไฟล์ที่เปลี่ยน ไม่ต้องสร้าง Telegram Bot หรือ Secrets ใหม่. ดูข้อจำกัดและตัวอย่างทั้งหมดใน `V42_RELEASE_NOTES_TH.md`.
 
 ## ใหม่ v4.1 — ระบบแจ้งเตือน Telegram โดยไม่ต้องเปิดหน้าเว็บค้างไว้
 

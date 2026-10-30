@@ -1,0 +1,15 @@
+{
+  "symbols": ["PEPEUSDT", "BTCUSDT", "DOGEUSDT"],
+  "capital_usdt": 1000,
+  "risk_per_signal_pct": 0.5,
+  "max_notional_multiple": 1.0,
+  "min_net_reward_risk": 2.0,
+  "round_trip_cost_pct": 0.16,
+  "breakout_lookback": 12,
+  "setup_expiry_bars": 6,
+  "breakout_volume_ratio": 1.2,
+  "entry_zone_atr_fraction": 0.45,
+  "max_risk_distance_pct": 3.0,
+  "max_mark_last_deviation_pct": 0.35,
+  "max_abs_funding_rate_pct": 0.3
+}
