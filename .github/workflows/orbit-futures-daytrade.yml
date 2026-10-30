@@ -1,0 +1,52 @@
+name: Orbit Futures Day Trade (Long & Short)
+
+on:
+  schedule:
+    # UTC 15m candles close :00/:15/:30/:45. Delay 7m for confirmed data.
+    # Independent from the old Spot Telegram workflow.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+    inputs:
+      send_test:
+        description: "Test Telegram only (no market signal)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orbit-futures-daytrade
+  cancel-in-progress: false
+
+jobs:
+  futures-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: monitor_requirements.txt
+      - name: Install small monitor dependencies
+        run: python -m pip install -r monitor_requirements.txt
+      - name: Validate config
+        run: python -m futures_daytrade_runner --validate-config
+      - name: Send optional Telegram test
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m futures_daytrade_runner --test-telegram
+      - name: Scan Futures and notify on new watch/ready state
+        if: ${{ github.event_name == 'schedule' || !inputs.send_test }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m futures_daytrade_runner
