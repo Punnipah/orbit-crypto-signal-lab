@@ -26,6 +26,7 @@ from futures_daytrade import (FuturesDataError, FuturesObservation, evaluate_fut
                               fetch_futures_ticker, read_futures_settings)
 from futures_paper import empty_paper, update_paper
 from futures_backup import fetch_backup_pair, fetch_backup_klines, fetch_backup_ticker
+from futures_kraken_backup import fetch_kraken_pair, fetch_kraken_klines, fetch_kraken_ticker
 from futures_symbols import resolve_futures_pair
 from monitor_delivery import send_telegram
 
@@ -170,18 +171,20 @@ def telegram_message(ob: FuturesObservation) -> str:
         return (f"🪐 Orbit FUTURES v5.0\n🔴 ยกเลิก Setup {ob.direction}\n"
                 f"คู่: {ob.symbol}\nเวลา: {when:%d/%m/%Y %H:%M} (ไทย)\n"
                 f"เหตุผล: {ob.reason}\nไม่มีการส่งคำสั่งซื้อขาย")
-    venue = ("BYBIT USDT Perpetual · WATCH ONLY (ไม่มี Taker Flow)" if ob.source != "BINANCE"
+    venue = ("KRAKEN USD Perpetual · WATCH ONLY (ไม่มี Taker Flow)" if ob.source == "KRAKEN_WATCH_ONLY"
+             else "BYBIT USDT Perpetual · WATCH ONLY (ไม่มี Taker Flow)" if ob.source == "BYBIT_WATCH_ONLY"
              else "BINANCE USDⓈ-M Perpetual")
+    quote = "USD" if ob.source == "KRAKEN_WATCH_ONLY" else "USDT"
     return (f"🪐 Orbit FUTURES v5.2\n{label}: {side_th}\n"
             f"คู่: {ob.symbol} | {venue}\n"
             f"เวลา: {when:%d/%m/%Y %H:%M} (ไทย)\n"
-            f"ราคา Futures ล่าสุด: {_format_price(ob.last_price)} USDT\n"
+            f"ราคา Futures ล่าสุด: {_format_price(ob.last_price)} {quote}\n"
             f"Entry Zone: {_format_price(ob.entry_low)} – {_format_price(ob.entry_high)}\n"
             f"Stop Loss: {_format_price(ob.stop)}\n"
             f"TP1: {_format_price(ob.tp1)} | TP2: {_format_price(ob.tp2)}\n"
             f"เป้า Net R:R TP2 (ประมาณ): {ob.net_rr_tp2:.1f}:1 หลังสมมติค่าธรรมเนียม/Slippage\n"
-            f"ความเสี่ยงตามทุนสมมติใน Config: ≈{ob.risk_usdt:.2f} USDT | "
-            f"Notional ≈{ob.notional_usdt:.2f} USDT\n"
+            f"ความเสี่ยงตามทุนสมมติใน Config: ≈{ob.risk_usdt:.2f} {quote} | "
+            f"Notional ≈{ob.notional_usdt:.2f} {quote}\n"
             f"สถานะ: {ob.state}\n{ob.reason}\n"
             f"⚠️ {caution}; ฟิวเจอร์สเสี่ยงถูกล้างพอร์ต หากใช้ Leverage สูง")
 
@@ -191,7 +194,8 @@ def transition(state: dict, observations: list[FuturesObservation]) -> None:
     validate_state(state)
     already = set(state["sent"]) | {p["id"] for p in state["pending"]}
     for ob in observations:
-        state_key = ("BYBIT:" if ob.source != "BINANCE" else "") + ob.symbol
+        state_key = ("KRAKEN:" if ob.source == "KRAKEN_WATCH_ONLY" else
+                     "BYBIT:" if ob.source == "BYBIT_WATCH_ONLY" else "") + ob.symbol
         old = state["signals"].get(state_key, {})
         next_info = {"setup": ob.setup_id, "state": ob.state}
         if ob.state in {"WATCH_LONG", "WATCH_SHORT", "READY_LONG", "READY_SHORT"}:
@@ -236,10 +240,18 @@ def scan(settings, *, now: datetime, frames_by_symbol: dict | None = None,
                 source = "BYBIT_WATCH_ONLY"
             except (FuturesDataError, ValueError, TypeError, KeyError, OSError) as backup_exc:
                 bybit_error = f"{type(backup_exc).__name__}: {str(backup_exc).replace(chr(10), ' ')[:120]}"
-                print(f"{requested} | Bybit unavailable ({bybit_error}); status=DATA_UNAVAILABLE", flush=True)
-                results.append(FuturesObservation(requested, "DATA_UNAVAILABLE",
-                                    f"Binance/Bybit ไม่พร้อม ({type(backup_exc).__name__})", now))
-                continue
+                print(f"{requested} | Bybit unavailable ({bybit_error}); trying Kraken WATCH fallback", flush=True)
+                try:
+                    symbol = fetch_kraken_pair(requested)
+                    frames = {tf: fetch_kraken_klines(symbol, tf, now=now) for tf in ("15m", "1h", "4h")}
+                    last, mark, funding = fetch_kraken_ticker(symbol, now=now)
+                    source = "KRAKEN_WATCH_ONLY"
+                except (FuturesDataError, ValueError, TypeError, KeyError, OSError) as kraken_exc:
+                    kraken_error = f"{type(kraken_exc).__name__}: {str(kraken_exc).replace(chr(10), ' ')[:120]}"
+                    print(f"{requested} | Kraken unavailable ({kraken_error}); status=DATA_UNAVAILABLE", flush=True)
+                    results.append(FuturesObservation(requested, "DATA_UNAVAILABLE",
+                                        f"Binance/Bybit/Kraken ไม่พร้อม ({type(kraken_exc).__name__})", now))
+                    continue
         try:
             ob = evaluate_futures(symbol, frames, last=last, mark=mark, funding_pct=funding,
                                   now=now, settings=replace(settings, symbols=(symbol,)),
