@@ -227,13 +227,16 @@ def scan(settings, *, now: datetime, frames_by_symbol: dict | None = None,
             last, mark, funding = fetch_futures_ticker(symbol, now=now)
             source = "BINANCE"
         except (FuturesDataError, ValueError, TypeError, KeyError, OverflowError, OSError) as exc:
-            print(f"{requested} Binance unavailable ({type(exc).__name__}); Bybit WATCH fallback", flush=True)
+            binance_error = f"{type(exc).__name__}: {str(exc).replace(chr(10), ' ')[:120]}"
+            print(f"{requested} | Binance unavailable ({binance_error}); trying Bybit WATCH fallback", flush=True)
             try:
                 symbol = fetch_backup_pair(requested)
                 frames = {tf: fetch_backup_klines(symbol, tf, now=now) for tf in ("15m", "1h", "4h")}
                 last, mark, funding = fetch_backup_ticker(symbol, now=now)
                 source = "BYBIT_WATCH_ONLY"
             except (FuturesDataError, ValueError, TypeError, KeyError, OSError) as backup_exc:
+                bybit_error = f"{type(backup_exc).__name__}: {str(backup_exc).replace(chr(10), ' ')[:120]}"
+                print(f"{requested} | Bybit unavailable ({bybit_error}); status=DATA_UNAVAILABLE", flush=True)
                 results.append(FuturesObservation(requested, "DATA_UNAVAILABLE",
                                     f"Binance/Bybit ไม่พร้อม ({type(backup_exc).__name__})", now))
                 continue
@@ -282,6 +285,7 @@ def run(*, dry_run=False) -> int:
             already.add(event["id"])
     coverage = sum(ob.state != "DATA_UNAVAILABLE" for ob in observations)
     state_health = "DOWN" if coverage == 0 else "OK" if coverage == len(observations) else "DEGRADED"
+    print(f"Futures market data: {coverage}/{len(observations)} | health={state_health}", flush=True)
     prior_health = state.get("health", {}).get("status")
     if state_health != "OK" and prior_health != state_health:
         event_id = hashlib.sha256(f"HEALTH|{state_health}|{now:%Y-%m-%d}".encode()).hexdigest()[:24]
