@@ -25,6 +25,7 @@ from futures_daytrade import (FuturesDataError, FuturesObservation, evaluate_fut
                               fetch_futures_catalog, fetch_futures_klines,
                               fetch_futures_ticker, read_futures_settings)
 from futures_paper import empty_paper, update_paper
+from futures_backup import fetch_backup_pair, fetch_backup_klines, fetch_backup_ticker
 from futures_symbols import resolve_futures_pair
 from monitor_delivery import send_telegram
 
@@ -169,8 +170,10 @@ def telegram_message(ob: FuturesObservation) -> str:
         return (f"🪐 Orbit FUTURES v5.0\n🔴 ยกเลิก Setup {ob.direction}\n"
                 f"คู่: {ob.symbol}\nเวลา: {when:%d/%m/%Y %H:%M} (ไทย)\n"
                 f"เหตุผล: {ob.reason}\nไม่มีการส่งคำสั่งซื้อขาย")
-    return (f"🪐 Orbit FUTURES v5.0\n{label}: {side_th}\n"
-            f"คู่: {ob.symbol} | USDⓈ-M Perpetual\n"
+    venue = ("BYBIT USDT Perpetual · WATCH ONLY (ไม่มี Taker Flow)" if ob.source != "BINANCE"
+             else "BINANCE USDⓈ-M Perpetual")
+    return (f"🪐 Orbit FUTURES v5.2\n{label}: {side_th}\n"
+            f"คู่: {ob.symbol} | {venue}\n"
             f"เวลา: {when:%d/%m/%Y %H:%M} (ไทย)\n"
             f"ราคา Futures ล่าสุด: {_format_price(ob.last_price)} USDT\n"
             f"Entry Zone: {_format_price(ob.entry_low)} – {_format_price(ob.entry_high)}\n"
@@ -188,7 +191,8 @@ def transition(state: dict, observations: list[FuturesObservation]) -> None:
     validate_state(state)
     already = set(state["sent"]) | {p["id"] for p in state["pending"]}
     for ob in observations:
-        old = state["signals"].get(ob.symbol, {})
+        state_key = ("BYBIT:" if ob.source != "BINANCE" else "") + ob.symbol
+        old = state["signals"].get(state_key, {})
         next_info = {"setup": ob.setup_id, "state": ob.state}
         if ob.state in {"WATCH_LONG", "WATCH_SHORT", "READY_LONG", "READY_SHORT"}:
             event = "WATCH" if ob.state.startswith("WATCH") else "READY"
@@ -197,11 +201,11 @@ def transition(state: dict, observations: list[FuturesObservation]) -> None:
         else:
             event = None
         if event and ob.setup_id:
-            event_id = hashlib.sha256(f"{ob.symbol}|{ob.setup_id}|{event}".encode()).hexdigest()[:24]
+            event_id = hashlib.sha256(f"{state_key}|{ob.setup_id}|{event}".encode()).hexdigest()[:24]
             if event_id not in already:
                 state["pending"].append({"id": event_id, "text": telegram_message(ob)})
                 already.add(event_id)
-        state["signals"][ob.symbol] = next_info
+        state["signals"][state_key] = next_info
     validate_state(state)
 
 
@@ -211,29 +215,41 @@ def scan(settings, *, now: datetime, frames_by_symbol: dict | None = None,
     requested_by_contract = requested_by_contract if requested_by_contract is not None else {}
     try:
         active = fetch_futures_catalog()
-    except FuturesDataError:
-        return [FuturesObservation(s, "DATA_UNAVAILABLE", "Futures Catalog ไม่พร้อม", now)
-                for s in settings.symbols]
+    except FuturesDataError as exc:
+        print(f"Binance Futures catalog unavailable: {str(exc)[:80]}; trying Bybit watch-only", flush=True)
+        active = set()
     results = []
     for requested in settings.symbols:
         try:
             pair = resolve_futures_pair(requested, active)
-        except ValueError:
-            results.append(FuturesObservation(requested, "DATA_UNAVAILABLE", "ไม่พบสัญญา USDT Perpetual หรือชื่อกำกวม", now))
-            continue
-        symbol = pair.contract
-        requested_by_contract[symbol] = requested
-        try:
+            symbol = pair.contract
             frames = {tf: fetch_futures_klines(symbol, tf, now=now) for tf in ("15m", "1h", "4h")}
             last, mark, funding = fetch_futures_ticker(symbol, now=now)
-            frames_by_symbol[symbol] = frames["15m"]
+            source = "BINANCE"
+        except (FuturesDataError, ValueError, TypeError, KeyError, OverflowError, OSError) as exc:
+            print(f"{requested} Binance unavailable ({type(exc).__name__}); Bybit WATCH fallback", flush=True)
+            try:
+                symbol = fetch_backup_pair(requested)
+                frames = {tf: fetch_backup_klines(symbol, tf, now=now) for tf in ("15m", "1h", "4h")}
+                last, mark, funding = fetch_backup_ticker(symbol, now=now)
+                source = "BYBIT_WATCH_ONLY"
+            except (FuturesDataError, ValueError, TypeError, KeyError, OSError) as backup_exc:
+                results.append(FuturesObservation(requested, "DATA_UNAVAILABLE",
+                                    f"Binance/Bybit ไม่พร้อม ({type(backup_exc).__name__})", now))
+                continue
+        try:
             ob = evaluate_futures(symbol, frames, last=last, mark=mark, funding_pct=funding,
-                                  now=now, settings=replace(settings, symbols=(symbol,)))
+                                  now=now, settings=replace(settings, symbols=(symbol,)),
+                                  require_taker_flow=(source == "BINANCE"))
+            ob = replace(ob, source=source)
+            if source == "BINANCE":
+                frames_by_symbol[symbol] = frames["15m"]
+                requested_by_contract[symbol] = requested
         except (FuturesDataError, ValueError, TypeError, KeyError, OverflowError, OSError) as exc:
             ob = FuturesObservation(symbol, "DATA_UNAVAILABLE",
                                     f"ตลาด/ข้อมูลไม่พร้อม ({type(exc).__name__})", now)
         results.append(ob)
-        print(f"{symbol} Futures | status={ob.state} | direction={ob.direction} | "
+        print(f"{symbol} {ob.source} Futures | status={ob.state} | direction={ob.direction} | "
               f"setup={ob.setup_id or '-'}", flush=True)
     return results
 
