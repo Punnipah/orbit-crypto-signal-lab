@@ -25,8 +25,10 @@ from futures_daytrade import (FuturesDataError, evaluate_futures, fetch_futures_
                               fetch_futures_klines, fetch_futures_ticker,
                               read_futures_settings)
 from futures_paper import paper_stats
+from futures_backup import fetch_backup_pair, fetch_backup_klines, fetch_backup_ticker
+from futures_kraken_backup import fetch_kraken_pair, fetch_kraken_klines, fetch_kraken_ticker
 from futures_research import evaluate_historical_proxy, fetch_history
-from futures_symbols import resolve_futures_pair
+from futures_symbols import FuturesPair, resolve_futures_pair
 from mobile_logic import PAIRS, SignalLook, concise_price, futures_look, normalize_symbol, spot_look
 from monitor_engine import analyze_symbol, read_settings
 from watch_plans import decode_watch
@@ -103,6 +105,28 @@ div[data-testid="stSegmentedControl"] button {border-radius:14px !important; fon
 div.st-key-orbit_screen {background:#0a1d2be8;border:1px solid #224657;border-radius:18px;padding:6px;backdrop-filter:blur(16px);}
 [data-testid="stVerticalBlockBorderWrapper"] {border-color:#254057;}
 div.stButton > button {min-height:45px; border-radius:13px; font-weight:750;}
+/* Streamlit's light secondary-button defaults were nearly invisible on dark Orbit. */
+div.stButton > button, div.stDownloadButton > button,
+div.stFormSubmitButton > button {
+  background:#163749 !important; color:#efffff !important;
+  border:1px solid #3e7780 !important;
+}
+div.stButton > button p, div.stDownloadButton > button p,
+div.stFormSubmitButton > button p {color:inherit !important;}
+div.stButton > button:disabled, div.stDownloadButton > button:disabled {
+  background:#1d303b !important; color:#a2b4c0 !important;
+  border-color:#374b55 !important; opacity:.75 !important;
+}
+div.stButton > button:hover:not(:disabled), div.stDownloadButton > button:hover:not(:disabled) {
+  background:#1d5c61 !important; border-color:#70e9bb !important;
+}
+div[data-testid="stSegmentedControl"] button,
+div[data-testid="stPills"] button {color:#142b37 !important;}
+div[data-testid="stSegmentedControl"] button[aria-checked="true"],
+div[data-testid="stPills"] button[aria-checked="true"] {
+  background:#174c49 !important; color:#e6fff5 !important;
+  border-color:#55d7ae !important;
+}
 div[data-testid="stExpander"] {border:1px solid #263d4d; border-radius:14px; background:#0d1a28;}
 @media(max-width:640px) {
  .block-container {padding:0.65rem 0.75rem 8rem !important;}
@@ -129,7 +153,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.0</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.4</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -177,12 +201,13 @@ def chosen_symbol(watch_token: str | None = None) -> str:
         return st.session_state.get("orbit_mobile_active_custom", preferred)
 
 
-def _signal_card(look: SignalLook, symbol: str, price: float | None, price_label: str) -> None:
+def _signal_card(look: SignalLook, symbol: str, price: float | None,
+                 price_label: str, quote: str = "USDT") -> None:
     name = escape(symbol.replace("USDT", "/USDT"))
     st.markdown(f"""
 <div class="orb-hero {look.tone}">
   <div class="orb-hero-title">{name} · {escape(price_label)}</div>
-  <div class="orb-hero-value">{escape(concise_price(price))} <span style="font-size:14px;color:#91a9bc">USDT</span></div>
+  <div class="orb-hero-value">{escape(concise_price(price))} <span style="font-size:14px;color:#91a9bc">{escape(quote)}</span></div>
   <div class="orb-hero-detail"><span class="orb-chip {look.tone}">{escape(look.tag)}</span></div>
   <div class="orb-hero-note"><b>{escape(look.title)}</b> · {escape(look.helper)}</div>
 </div>""", unsafe_allow_html=True)
@@ -287,16 +312,34 @@ def _futures_catalog() -> set[str]:
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _futures_snapshot(symbol: str, capital: float, risk_pct: float):
-    pair = resolve_futures_pair(symbol, _futures_catalog())
+    now = datetime.now(timezone.utc)
+    source, failure = "BINANCE", ""
+    try:
+        pair = resolve_futures_pair(symbol, _futures_catalog())
+        frames = {tf: fetch_futures_klines(pair.contract, tf, now=now) for tf in ("15m", "1h", "4h")}
+        last, mark, funding = fetch_futures_ticker(pair.contract, now=now)
+    except (FuturesDataError, ValueError, RuntimeError, OSError) as exc:
+        failure = "Binance: " + str(exc)[:100]
+        try:
+            source = "BYBIT_WATCH_ONLY"
+            contract = fetch_backup_pair(symbol)
+            pair = resolve_futures_pair(symbol, {contract})
+            frames = {tf: fetch_backup_klines(contract, tf, now=now) for tf in ("15m", "1h", "4h")}
+            last, mark, funding = fetch_backup_ticker(contract, now=now)
+        except (FuturesDataError, ValueError, RuntimeError, OSError) as bybit_exc:
+            failure += " | Bybit: " + str(bybit_exc)[:100]
+            source = "KRAKEN_WATCH_ONLY"
+            contract = fetch_kraken_pair(symbol)
+            pair = FuturesPair(symbol, contract)
+            frames = {tf: fetch_kraken_klines(contract, tf, now=now) for tf in ("15m", "1h", "4h")}
+            last, mark, funding = fetch_kraken_ticker(contract, now=now)
     settings = replace(read_futures_settings(ROOT / "futures_daytrade_config.json"),
                        symbols=(pair.contract,), capital_usdt=capital,
                        risk_per_signal_pct=risk_pct)
-    now = datetime.now(timezone.utc)
-    frames = {tf: fetch_futures_klines(pair.contract, tf, now=now) for tf in ("15m", "1h", "4h")}
-    last, mark, funding = fetch_futures_ticker(pair.contract, now=now)
     result = evaluate_futures(pair.contract, frames, last=last, mark=mark,
-                              funding_pct=funding, now=now, settings=settings)
-    return result, frames["15m"].tail(90)[["close"]], funding, pair
+                              funding_pct=funding, now=now, settings=settings,
+                              require_taker_flow=(source == "BINANCE"))
+    return replace(result, source=source), frames["15m"].tail(90)[["close"]], funding, pair, failure
 
 
 def futures_screen(symbol: str) -> None:
@@ -311,7 +354,7 @@ def futures_screen(symbol: str) -> None:
     risk_pct = st.session_state["orbit_futures_risk"]
     try:
         with st.spinner("กำลังตรวจสัญญาณ Futures 15M / 1H / 4H..."):
-            ob, chart, funding_pct, pair = _futures_snapshot(symbol, capital, risk_pct)
+            ob, chart, funding_pct, pair, failure = _futures_snapshot(symbol, capital, risk_pct)
     except (FuturesDataError, ValueError, RuntimeError, OSError, KeyError, TypeError) as exc:
         _signal_card(futures_look("DATA_UNAVAILABLE", "NONE"), symbol, None, "USD-M FUTURES")
         st.warning("Futures API ไม่พร้อมในขณะนี้ · ไม่แสดงสัญญาณทดแทน")
@@ -323,10 +366,22 @@ def futures_screen(symbol: str) -> None:
             st.rerun()
         return
     look = futures_look(ob.state, ob.direction)
-    _signal_card(look, pair.contract, ob.last_price, "USDⓈ-M PERPETUAL FUTURES")
+    contract_label = ("KRAKEN USD PERPETUAL · WATCH ONLY" if ob.source == "KRAKEN_WATCH_ONLY"
+                      else "BYBIT USDT PERPETUAL · WATCH ONLY" if ob.source == "BYBIT_WATCH_ONLY"
+                      else "BINANCE USDⓈ-M PERPETUAL")
+    quote = "USD" if ob.source == "KRAKEN_WATCH_ONLY" else "USDT"
+    _signal_card(look, pair.contract, ob.last_price, contract_label, quote=quote)
+    if ob.source != "BINANCE":
+        st.warning("⚠️ " + failure + " · แสดง " +
+                   ("Kraken USD" if ob.source == "KRAKEN_WATCH_ONLY" else "Bybit USDT") +
+                   " Futures สำรองเพื่อเฝ้าดูเท่านั้น (WATCH ONLY) · ไม่มีข้อมูล Taker Flow ย้อนหลัง "
+                   "จึงไม่ออก READY หรือสัญญาณเข้าซื้อขาย")
+        if ob.source == "KRAKEN_WATCH_ONLY":
+            st.caption("ข้อมูล Kraken เป็นสัญญา USD Perpetual ไม่ใช่ USDT; "
+                       "ไม่ผสมราคาจาก Binance หรือ Bybit และไม่ใช้แทนราคา USDT แบบหนึ่งต่อหนึ่ง")
     if pair.multiplier != 1:
         st.info(f"สัญญา {pair.contract} = {pair.multiplier:,} {pair.underlying} · "
-                f"ราคาต่อ {pair.underlying} ≈ {concise_price(pair.unit_price(ob.last_price))} USDT · "
+                f"ราคาต่อ {pair.underlying} ≈ {concise_price(pair.unit_price(ob.last_price))} {quote} · "
                 "Entry/SL/TP ด้านล่างเป็นราคาต่อหน่วยสัญญา Futures")
     long_active = ob.direction == "LONG"
     short_active = ob.direction == "SHORT"
@@ -352,7 +407,7 @@ def futures_screen(symbol: str) -> None:
         st.caption("ยังไม่มีแผนเข้าที่ผ่านเงื่อนไข จึงไม่สร้างราคา Entry/SL/TP สมมติ")
     if ob.net_rr_tp2 is not None:
         st.caption(f"Net R:R TP2 ≈ {ob.net_rr_tp2:.1f}:1 (ประเมินต้นทุน) · "
-                   f"Risk จำลอง ≈ {ob.risk_usdt:.2f} USDT · Notional ≈ {ob.notional_usdt:.2f} USDT")
+                   f"Risk จำลอง ≈ {ob.risk_usdt:.2f} {quote} · Notional ≈ {ob.notional_usdt:.2f} {quote}")
     a, b = st.columns(2)
     with a:
         st.caption(f"Funding ล่าสุด: {funding_pct:+.4f}%")
@@ -364,7 +419,7 @@ def futures_screen(symbol: str) -> None:
                 unsafe_allow_html=True)
     st.line_chart(chart, height=210)
     with st.expander("⚙️ ทุนและความเสี่ยงจำลอง", expanded=False):
-        st.number_input("ทุนสมมติ (USDT)", min_value=100.0, max_value=10_000_000.0,
+        st.number_input(f"ทุนสมมติ ({quote})", min_value=100.0, max_value=10_000_000.0,
                         step=100.0, key="orbit_futures_capital")
         st.slider("เสี่ยงต่อสัญญาณ (%)", min_value=0.1, max_value=1.0, step=0.1,
                   key="orbit_futures_risk")
