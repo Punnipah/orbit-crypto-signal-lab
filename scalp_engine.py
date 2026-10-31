@@ -6,7 +6,7 @@ time-limited research candidate, not a guaranteed fill or profitable trade.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 import hashlib
@@ -71,6 +71,7 @@ class ScalpObservation:
     setup_expires_at: datetime | None = None
     strategy: str = "TREND_BREAKOUT"
     market_regime: str = "UNCONFIRMED"
+    early_reversal_note: str = ""
 
 
 def read_scalp_settings(path: Path | str) -> ScalpSettings:
@@ -207,6 +208,41 @@ def _adx(frame: pd.DataFrame, period: int = 14) -> float:
     return float(dx.ewm(alpha=1 / period, adjust=False).mean().iloc[-1])
 
 
+def _early_spot_reversal_note(snapshot: MarketSnapshot) -> str:
+    """Advisory only: identify a possible bottoming attempt before a breakout.
+
+    This deliberately never changes WAIT/RISK_BLOCK into READY and never
+    generates an entry, target, order, or Telegram event.
+    """
+    if snapshot.venue != "BINANCE_TH_SPOT":
+        return ""
+    fifteen, five, one = (snapshot.frames[k] for k in ("15m", "5m", "1m"))
+    if min(len(fifteen), len(five), len(one)) < 65:
+        return ""
+    ema9, ema21 = _ema(fifteen.close, 9), _ema(fifteen.close, 21)
+    if not (ema9.iloc[-1] < ema21.iloc[-1] and
+            fifteen.close.iloc[-1] < ema21.iloc[-1]):
+        return ""  # This is specifically a counter-trend recovery watch.
+    adx = _adx(five)
+    if not math.isfinite(adx) or adx > 27:
+        return ""
+    previous = five.iloc[-31:-1]
+    floor, ceiling = float(previous.low.min()), float(previous.high.max())
+    width = ceiling - floor
+    price = float(one.close.iloc[-1])
+    if width <= 0 or not floor - width * .10 <= price <= floor + width * .30:
+        return ""
+    latest = one.iloc[-1]
+    if latest.volume <= 0 or not math.isfinite(float(latest.taker_buy)):
+        return ""
+    share = float(latest.taker_buy / latest.volume)
+    if share < .53 or price < float(one.close.iloc[-2]):
+        return ""
+    return (f"EARLY BUY WATCH (ยังไม่ใช่สัญญาณซื้อ): ราคาใกล้แนวรับ "
+            f"{floor:.10g} · สัดส่วน Taker Buy ของแท่ง 1m ที่ปิดแล้ว "
+            f"{share:.0%} · 15m ยังเป็นขาลง; รอการยืนยันและตรวจต้นทุนก่อนเข้า")
+
+
 def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: datetime,
                      atr: float, atr_pct: float, full_spread_limit: float) -> ScalpObservation | None:
     """Independent bounded range-reversal setup, never a blind limit-order suggestion.
@@ -326,15 +362,18 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     if now.tzinfo is None or snapshot.checked_at.tzinfo is None:
         raise ValueError("Time zone not set")
     base = (snapshot.venue, snapshot.symbol)
+    early_reversal_note = ""
 
     def status(name: str, reason: str, **kwargs) -> ScalpObservation:
-        return ScalpObservation(*base, name, reason, now, spread_bps=snapshot.spread_bps, **kwargs)
+        return ScalpObservation(*base, name, reason, now, spread_bps=snapshot.spread_bps,
+                                early_reversal_note=early_reversal_note, **kwargs)
 
     if not 0 <= (now - snapshot.checked_at).total_seconds() <= 60:
         return status("DATA_UNAVAILABLE", "Quote เก่ากว่า 60 วินาที")
     fifteen = snapshot.frames["15m"]
     five = snapshot.frames["5m"]
     one = snapshot.frames["1m"]
+    early_reversal_note = _early_spot_reversal_note(snapshot)
     atr = _atr(five)
     current = float(one.close.iloc[-1])
     atr_pct = atr / current * 100
@@ -349,7 +388,7 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     range_result = _range_candidate(snapshot, settings, now, atr, atr_pct,
                                     adaptive_spread_bps)
     if range_result is not None:
-        return range_result
+        return replace(range_result, early_reversal_note=early_reversal_note)
     if snapshot.spread_bps > adaptive_spread_bps:
         return status("RISK_BLOCK", f"Spread {snapshot.spread_bps:.1f} bps สูงเกิน"
                       f"เกณฑ์ตามความผันผวน {adaptive_spread_bps:.1f} bps")

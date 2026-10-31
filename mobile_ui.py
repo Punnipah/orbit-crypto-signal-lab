@@ -273,6 +273,8 @@ def scalp_screen() -> None:
                 unsafe_allow_html=True)
     st.caption(f"Market Regime: {ob.market_regime} · Strategy: {ob.strategy} · "
                "Sideways จะเข้าใกล้ขอบกรอบเท่านั้น ไม่เข้าเมื่อราคากลางกรอบ")
+    if ob.early_reversal_note:
+        st.info(ob.early_reversal_note + " · เป็นข้อมูลเฝ้าดูเท่านั้น ไม่ยกเลิก RISK BLOCK")
     st.markdown(f"**Bid:** `{concise_price(snap.bid)}` · "
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
