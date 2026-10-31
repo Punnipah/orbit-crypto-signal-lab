@@ -235,7 +235,7 @@ def _scalp_live(venue: str, symbol: str, refresh_id: int):
 def scalp_screen() -> None:
     """On-page live read-only scan; stops when the Streamlit session closes."""
     from scalp_marketdata import MarketDataError
-    from scalp_engine import scalp_evidence
+    from scalp_engine import scalp_evidence, scalp_watch_zones
 
     st.markdown("## 🎯 Scalp Signal v5.8 · LIVE SIGNAL")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
@@ -283,6 +283,26 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    st.markdown("### 🗺️ โซนเฝ้าราคา 1–3 (แสดงแม้ WAIT)")
+    st.caption("โซนทางเลือกจาก EMA21 และแนวรับ/ต้านของแท่ง 5m ที่ปิดแล้ว · "
+               "ไม่ใช่แผนแบ่งซื้อ 3 ไม้ ไม่ใช่คำสั่งซื้อ และไม่ใช่โซนรับประกันว่าจะเด้ง")
+    watch_sides = (["LONG"] if venue == "BINANCE_TH_SPOT" else
+                   [ob.side] if ob.side in ("LONG", "SHORT") else ["LONG", "SHORT"])
+    for watch_side in watch_sides:
+        zones = scalp_watch_zones(snap, watch_side)
+        if zones:
+            st.markdown(f"**{'BUY / LONG — โซนแนวรับ' if watch_side == 'LONG' else 'SHORT — โซนแนวต้าน'}**")
+            rows = []
+            for zone in zones:
+                label = {"IN_ZONE": "🟡 อยู่ในโซน · รอยืนยัน", "WATCH": "⚪ รอราคาเข้าโซน",
+                         "INVALIDATED": "🔴 แนวรับ/ต้านหลุด · ห้ามรับอัตโนมัติ"}[zone["state"]]
+                rows.append({"โซน": zone["name"],
+                             "ราคา": f"{concise_price(zone['low'])}–{concise_price(zone['high'])}",
+                             "สถานะ": label, "ที่มา": zone["basis"]})
+            st.table(pd.DataFrame(rows))
+    st.caption("เมื่อแตะโซน ต้องรอแท่ง 1m ที่ปิดแล้วยืนยัน Volume/Flow, "
+               "Spread, Stop Loss และ Net R:R ก่อนพิจารณาเข้า · "
+               "ถึงโซนไม่ได้แปลว่า BUY READY; ต้องดูสถานะจากตัวประเมินด้านบน")
     with st.expander("🔎 ตรวจหลักฐานของสัญญาณ (ไม่ใช่เปอร์เซ็นต์ชนะ)"):
         for name, passed, explanation in scalp_evidence(snap, cfg, ob):
             st.markdown(f"{'✅' if passed else '🟡'} **{name}** — {explanation}")

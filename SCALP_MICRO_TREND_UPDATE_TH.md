@@ -7,6 +7,7 @@
 - 5m ที่สวนกับ 15m ขาขึ้น/ลงชัดเจนไม่สามารถใช้ทางลัดนี้ได้.
 - กลยุทธ์ Range Reversal และ Early Buy Watch เดิมยังทำงานตามเดิม. Early Buy Watch เป็นเพียงเฝ้าดู ไม่ใช่คำแนะนำซื้อ.
 - Binance TH Spot ไม่เปิด Short, ไม่มีการส่งคำสั่งซื้อขายจริง และระบบไม่ต้องใช้ API Key ส่วนตัว.
+- หน้า Scalp แสดง **โซนเฝ้า 1–3 แม้เป็น WAIT** จาก EMA21 5m, แนวรับ/ต้าน 12 แท่ง และ 48 แท่งที่ปิดแล้ว พร้อมป้าย `รอเข้าโซน / อยู่ในโซนแต่รอยืนยัน / แนวรับต้านหลุด`. เป็นโซนทางเลือก ไม่ใช่แผนถัวเฉลี่ย 3 ไม้หรือคำสั่งซื้อที่รออยู่.
 
 ## ข้อจำกัด
 
@@ -14,8 +15,8 @@
 
 ## ตรวจสอบ
 
-`PYTHONPATH=. python -m unittest discover -s tests -q` (254 tests, ผ่าน 251, skipped 3 ณ วันที่จัดทำ)
+`PYTHONPATH=. python -m unittest discover -s tests -q` (256 tests, ผ่าน 253, skipped 3 ณ วันที่จัดทำ)
 
 ## นำขึ้นเว็บ
 
-อัปโหลดไฟล์ชุดนี้ทับไฟล์ใน GitHub repository ที่ Streamlit ใช้ (โดยเฉพาะ `scalp_engine.py`, `tests/test_scalp_v56.py`); รอ Streamlit redeploy. หน้าแอปยังใช้ชื่อ `LIVE SIGNAL` เดิม แต่เมื่อพบโอกาสแบบใหม่จะปรากฏ `Strategy: MICRO_TREND`. การเห็นหัวข้อ LIVE SIGNAL เพียงอย่างเดียวไม่ยืนยันว่า patch นี้ deploy แล้ว.
+อัปโหลดไฟล์ชุดนี้ทับไฟล์ใน GitHub repository ที่ Streamlit ใช้ (โดยเฉพาะ `scalp_engine.py`, `mobile_ui.py` และไฟล์ทดสอบ); รอ Streamlit redeploy. หน้าแอปยังใช้ชื่อ `LIVE SIGNAL` เดิม แต่จะมีหัวข้อ `โซนเฝ้าราคา 1–3 (แสดงแม้ WAIT)` และเมื่อพบโอกาสแบบใหม่จะปรากฏ `Strategy: MICRO_TREND`.

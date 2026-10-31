@@ -13,7 +13,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scalp_engine import ScalpSettings, _adx, evaluate_scalp, scalp_evidence
+from scalp_engine import ScalpSettings, _adx, evaluate_scalp, scalp_evidence, scalp_watch_zones
 from scalp_marketdata import Instrument, MarketSnapshot
 
 
@@ -44,6 +44,21 @@ def sideways(venue: str = "BINANCE_TH_SPOT", confirm: bool = True) -> MarketSnap
 
 
 class RangeTests(unittest.TestCase):
+    def test_three_watch_zones_exist_even_when_signal_waits(self):
+        snap = sideways()
+        zones = scalp_watch_zones(snap)
+        self.assertEqual(len(zones), 3)
+        self.assertTrue(all(z["low"] < z["high"] and z["low"] > 0 for z in zones))
+        self.assertTrue(all(z["state"] in ("WATCH", "IN_ZONE", "INVALIDATED") for z in zones))
+        # Rendering watch zones does not mutate or upgrade the signal state.
+        self.assertEqual(scalp_watch_zones(snap), zones)
+
+    def test_broken_support_is_not_a_buy_signal(self):
+        snap = sideways()
+        moved = replace(snap, ask=90.0, bid=89.99)
+        zones = scalp_watch_zones(moved)
+        self.assertTrue(any(z["state"] == "INVALIDATED" for z in zones))
+
     def settings(self) -> ScalpSettings:
         return ScalpSettings(("BTCUSDT",), ("BTCUSDT",), min_net_rr=1.5)
 

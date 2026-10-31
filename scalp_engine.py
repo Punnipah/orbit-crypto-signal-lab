@@ -316,6 +316,45 @@ def scalp_evidence(snapshot: MarketSnapshot, settings: ScalpSettings,
     ]
 
 
+def scalp_watch_zones(snapshot: MarketSnapshot, side: str = "LONG") -> list[dict]:
+    """Indicative structural watch zones, independent of an executable signal.
+
+    Zones are alternatives for observing a reaction, NOT staggered buy orders.
+    Use only fully closed 5m candles; never substitute these for READY gates.
+    """
+    five = snapshot.frames["5m"]
+    if len(five) < 50 or side not in ("LONG", "SHORT"):
+        return []
+    price = float(snapshot.ask if side == "LONG" else snapshot.bid)
+    atr = _atr(five)
+    if not math.isfinite(atr) or atr <= 0 or price <= 0:
+        return []
+    history = five.iloc[-49:-1]
+    if side == "LONG":
+        anchors = [float(_ema(five.close, 21).iloc[-1]),
+                   float(history.low.tail(12).min()), float(history.low.min())]
+    else:
+        anchors = [float(_ema(five.close, 21).iloc[-1]),
+                   float(history.high.tail(12).max()), float(history.high.max())]
+    zones = []
+    for index, anchor in enumerate(anchors, 1):
+        # One-zone width adapts to volatility but does not imply a fill price.
+        lo, hi = max(0.0, anchor - atr * .18), anchor + atr * .18
+        if lo <= 0 or not math.isfinite(hi):
+            return []
+        distance_pct = (price - hi) / price * 100 if side == "LONG" and price > hi else (
+            (lo - price) / price * 100 if side == "SHORT" and price < lo else 0.0)
+        # A crossed support/resistance is invalidated, not a cheaper entry.
+        broken = price < lo - atr * .3 if side == "LONG" else price > hi + atr * .3
+        state = "INVALIDATED" if broken else "IN_ZONE" if lo <= price <= hi else "WATCH"
+        zones.append({"name": f"โซน {index}", "low": lo, "high": hi,
+                      "state": state, "distance_pct": max(0.0, distance_pct),
+                      "basis": ("EMA21 5m" if index == 1 else
+                                "แนวรับ/ต้าน 12 แท่ง 5m" if index == 2 else
+                                "แนวรับ/ต้าน 48 แท่ง 5m")})
+    return zones
+
+
 def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: datetime,
                      atr: float, atr_pct: float, full_spread_limit: float) -> ScalpObservation | None:
     """Independent bounded range-reversal setup, never a blind limit-order suggestion.
