@@ -3,7 +3,7 @@ import unittest
 
 import pandas as pd
 
-from indicative_zones import indicative_zone
+from indicative_zones import indicative_zone, support_resistance
 
 
 class WatchPriceTests(unittest.TestCase):
@@ -27,6 +27,11 @@ class WatchPriceTests(unittest.TestCase):
         self.assertLess(p.target_2, p.target_1)
         self.assertLess(p.target_1, p.low)
         self.assertLess(p.high, p.invalidation)
+
+    def test_support_and_resistance_both_available_without_ready_signal(self):
+        support, resistance = support_resistance(self.frame())
+        self.assertEqual((support.side, resistance.side), ("LONG", "SHORT"))
+        self.assertLess(support.high, resistance.low)
 
     def test_invalid_or_missing_data_returns_no_price(self):
         self.assertIsNone(indicative_zone(self.frame().head(10)))

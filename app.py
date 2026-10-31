@@ -24,7 +24,7 @@ from bybit_intelligence import fetch_bybit_evidence
 from display_format import format_price, format_signed_price
 from entry_planner import EntryPlan, plan_entry
 from journal_utils import combine_journal, export_signal_journal, import_signal_journal
-from indicative_zones import indicative_zone
+from indicative_zones import indicative_zone, support_resistance
 from macro_liquidity import fetch_market_liquidity
 from market_microstructure import fetch_microstructure, microstructure_checks
 from monitor_engine import read_settings
@@ -659,6 +659,16 @@ def render_multi_timeframe_dashboard():
                                       and all(check.passed for check in extra[:2])))
     st.divider()
     st.subheader("🎯 แผน MTF สด (คำนวณใหม่ตามแท่ง 1h — ไม่ใช่แผนที่ล็อกไว้)")
+    levels = support_resistance(frame_bars["1h"]) if "1h" in frame_bars else None
+    if levels is not None:
+        support, resistance = levels
+        st.markdown("#### 📊 แนวรับ–แนวต้านที่ต้องเฝ้าดู")
+        cols = st.columns(2)
+        cols[0].metric("🟢 แนวรับ", f"{format_price(support.low)} – {format_price(support.high)}")
+        cols[1].metric("🔴 แนวต้าน", f"{format_price(resistance.low)} – {format_price(resistance.high)}")
+        st.caption("อ้างอิงแท่ง 1h ที่ปิดแล้ว · แนวรับ–แนวต้านไม่ใช่สัญญาณเข้า และไม่รับประกันว่าราคาจะกลับตัว")
+    else:
+        st.caption("แนวรับ–แนวต้าน: ข้อมูลแท่ง 1h ที่ตรวจสอบได้ยังไม่เพียงพอ")
     if risk_audit.rr_tp2 is not None:
         st.caption(f"ตรวจ R:R หลัง fee/slippage จำลอง: TP1 {risk_audit.rr_tp1:.2f}R "
                    f"· TP2 {risk_audit.rr_tp2:.2f}R · ผ่านเกณฑ์อย่างน้อย {min_rr:.2f}R จึงมีสิทธิ์ READY")

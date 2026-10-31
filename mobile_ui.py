@@ -32,7 +32,7 @@ from futures_symbols import FuturesPair, resolve_futures_pair
 from mobile_logic import PAIRS, SignalLook, concise_price, futures_look, normalize_symbol, spot_look
 from monitor_engine import analyze_symbol, read_settings
 from watch_plans import decode_watch
-from indicative_zones import indicative_zone
+from indicative_zones import indicative_zone, support_resistance
 
 
 ROOT = Path(__file__).resolve().parent
@@ -253,6 +253,23 @@ def _watch_price_panel(plan, title: str, quote: str = "USDT") -> None:
                "Stop และ Net R:R; ถ้าไม่ผ่านยังคง WAIT")
 
 
+def _support_resistance_panel(candles: pd.DataFrame, quote: str = "USDT") -> None:
+    st.markdown("### 📊 แนวรับ–แนวต้าน (แสดงไม่ว่าสถานะใด)")
+    levels = support_resistance(candles)
+    if levels is None:
+        st.warning("ข้อมูลแท่งราคาที่ปิดแล้วไม่พอคำนวณแนวรับ–แนวต้าน")
+        return
+    support, resistance = levels
+    st.markdown(
+        '<div class="orb-zone-prices">'
+        f'<div class="orb-zone-price"><small>🟢 แนวรับ ({escape(quote)})</small>'
+        f'{escape(concise_price(support.low))}<small>ถึง {escape(concise_price(support.high))}</small></div>'
+        f'<div class="orb-zone-price"><small>🔴 แนวต้าน ({escape(quote)})</small>'
+        f'{escape(concise_price(resistance.low))}<small>ถึง {escape(concise_price(resistance.high))}</small></div>'
+        '</div>', unsafe_allow_html=True)
+    st.caption("ประเมินจากแท่งราคาที่ปิดแล้วและ ATR · เป็นระดับเฝ้าดู ไม่ได้แปลว่าราคาจะเด้ง/ย่อตรงนี้แน่นอน")
+
+
 @st.cache_data(ttl=45, show_spinner=False)
 def _scalp_live(venue: str, symbol: str, refresh_id: int):
     """Independent, venue-native public data; never call exchange order APIs."""
@@ -316,6 +333,7 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    _support_resistance_panel(snap.frames["5m"])
     st.markdown("### 🗺️ โซนเฝ้าราคา 1–3 (แสดงแม้ WAIT)")
     st.caption("โซนทางเลือกจาก EMA21 และแนวรับ/ต้านของแท่ง 5m ที่ปิดแล้ว · "
                "ไม่ใช่แผนแบ่งซื้อ 3 ไม้ ไม่ใช่คำสั่งซื้อ และไม่ใช่โซนรับประกันว่าจะเด้ง")
@@ -423,6 +441,10 @@ def spot_screen(symbol: str, watch_token: str | None) -> None:
         return
     look = spot_look(observation.status)
     _signal_card(look, symbol, observation.last_price, "BINANCE SPOT")
+    try:
+        _support_resistance_panel(_spot_watch_candles(symbol))
+    except (ValueError, RuntimeError, KeyError, TypeError, OSError, IndexError):
+        st.warning("แนวรับ–แนวต้าน Spot ยังไม่มีข้อมูลแท่ง 1h ที่ตรวจสอบได้")
     st.markdown('<div class="orb-section"><strong>แผนราคา</strong><span class="orb-subtle">USDT · ไม่ใช่คำสั่งซื้อ</span></div>',
                 unsafe_allow_html=True)
     if observation.entry_low is None or observation.entry_high is None:
@@ -561,6 +583,7 @@ def futures_screen(symbol: str) -> None:
 </div>""", unsafe_allow_html=True)
     st.markdown('<div class="orb-section"><strong>แผนเข้า–ออก</strong><span class="orb-subtle">ประเมินจาก Futures</span></div>',
                 unsafe_allow_html=True)
+    _support_resistance_panel(chart, quote)
     if ob.entry_low is None or ob.entry_high is None:
         _watch_price_panel(indicative_zone(chart, side="LONG"),
                            "Futures · แนวรับสำหรับเฝ้า LONG", quote)

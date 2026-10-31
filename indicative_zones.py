@@ -22,6 +22,13 @@ class IndicativeZone:
     basis: str
 
 
+def support_resistance(candles: pd.DataFrame) -> tuple[IndicativeZone, IndicativeZone] | None:
+    """Expose both sides even when the trading signal has no direction."""
+    support = indicative_zone(candles, side="LONG")
+    resistance = indicative_zone(candles, side="SHORT")
+    return (support, resistance) if support is not None and resistance is not None else None
+
+
 def indicative_zone(candles: pd.DataFrame, *, side: str = "LONG") -> IndicativeZone | None:
     """Project a watch scenario using only previous closed price candles.
 
