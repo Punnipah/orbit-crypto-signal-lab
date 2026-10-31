@@ -24,6 +24,7 @@ from bybit_intelligence import fetch_bybit_evidence
 from display_format import format_price, format_signed_price
 from entry_planner import EntryPlan, plan_entry
 from journal_utils import combine_journal, export_signal_journal, import_signal_journal
+from indicative_zones import indicative_zone
 from macro_liquidity import fetch_market_liquidity
 from market_microstructure import fetch_microstructure, microstructure_checks
 from monitor_engine import read_settings
@@ -676,7 +677,21 @@ def render_multi_timeframe_dashboard():
         if verdict.status != "READY":
             st.info("โซนนี้มีไว้เฝ้ารอเท่านั้น **อย่าซื้อเพียงเพราะราคาเข้าโซน** จนกว่ากฎ MTF จะผ่านและตรวจราคาเสนอขายจริง")
     else:
-        st.info("ยังไม่มี Entry Zone/SL/TP ที่ใช้ได้จากกรอบ 1h · ระบบไม่สร้างราคาเข้าซื้อสมมติ")
+        # Watch-only levels must not be promoted to the approved MTF entry plan.
+        projected = indicative_zone(frame_bars["1h"]) if "1h" in frame_bars else None
+        if projected is not None:
+            st.info("🧭 **แผนราคาเฝ้าดูจากกรอบ 1h — ยังเข้าไม่ได้** · "
+                    "เป็นสถานการณ์คาดการณ์จากแนวรับและ ATR ไม่ใช่สัญญาณ BUY")
+            st.markdown(f"**รอราคาเข้าโซน ({selected['quote']}): "
+                        f"{format_price(projected.low)} – {format_price(projected.high)}**")
+            cols = st.columns(2)
+            cols[0].metric("จุดยกเลิกสมมติฐาน", format_price(projected.invalidation))
+            cols[1].metric("เป้าหมายจำลอง 1", format_price(projected.target_1))
+            st.metric("เป้าหมายจำลอง 2", format_price(projected.target_2))
+            st.caption("เมื่อราคาเข้าโซนต้องตรวจเงื่อนไข MTF และความเสี่ยงอีกครั้ง · "
+                       "ถ้าไม่ผ่านยังเป็น WAIT; ระดับราคาจะคำนวณใหม่ตามแท่งที่ปิดแล้ว")
+        else:
+            st.warning("ข้อมูลแท่ง 1h ไม่พอสร้างโซนที่ตรวจสอบได้ · ไม่เดาราคาโดยไม่มีข้อมูล")
 
     times = []
     if verdict.next_15m_close is not None:

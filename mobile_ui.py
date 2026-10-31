@@ -32,6 +32,7 @@ from futures_symbols import FuturesPair, resolve_futures_pair
 from mobile_logic import PAIRS, SignalLook, concise_price, futures_look, normalize_symbol, spot_look
 from monitor_engine import analyze_symbol, read_settings
 from watch_plans import decode_watch
+from indicative_zones import indicative_zone
 
 
 ROOT = Path(__file__).resolve().parent
@@ -101,6 +102,20 @@ header[data-testid="stHeader"] { background: transparent; }
 .orb-pair h4 {margin:0;color:#edf7fa;font-size:15px;}
 .orb-pair p {margin:5px 0 0;color:#99b3c2;font-size:12px;}
 .orb-footnote {font-size:11px; color:#7896a8; padding:9px 0 2px;}
+/* Scalp watch levels: high contrast and tabular digits even on small phones. */
+.orb-zone {background:#122f40;border:1px solid #4e8298;border-radius:16px;
+  padding:16px;margin:10px 0;box-shadow:0 4px 18px #0005;}
+.orb-zone.in-zone {border-color:#f2cb6b;background:#302d25;}
+.orb-zone.invalid {border-color:#ca7281;background:#322530;}
+.orb-zone-head {display:flex;justify-content:space-between;align-items:center;gap:8px;
+  flex-wrap:wrap;color:#f1f8ff;font-size:16px;font-weight:800;}
+.orb-zone-state {font-size:13px;font-weight:800;color:#ffe3a0;}
+.orb-zone-prices {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:11px 0;}
+.orb-zone-price {background:#061b29;border:1px solid #456c7f;border-radius:11px;padding:10px;
+  min-width:0;color:#fff;font-size:clamp(17px,4.7vw,25px);line-height:1.35;
+  font-weight:850;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;letter-spacing:.1px;}
+.orb-zone-price small {display:block;font-size:12px;color:#c6dce8;margin-bottom:5px;font-weight:700;}
+.orb-zone-sub {color:#b9d7e6;font-size:13px;line-height:1.5;}
 div[data-testid="stSegmentedControl"] button, div[data-testid="stPills"] button {min-height:42px;}
 div[data-testid="stSegmentedControl"] button {border-radius:14px !important; font-weight:750;}
 div.st-key-orbit_screen {background:#0a1d2be8;border:1px solid #224657;border-radius:18px;padding:6px;backdrop-filter:blur(16px);}
@@ -220,6 +235,24 @@ def _price_grid(items: list[tuple[str, float | None]]) -> None:
     st.markdown(f'<div class="orb-kv-grid">{cards}</div>', unsafe_allow_html=True)
 
 
+def _watch_price_panel(plan, title: str, quote: str = "USDT") -> None:
+    """Always distinguish provisional levels from a validated entry plan."""
+    st.markdown(f"### 🧭 {title} · ราคาเฝ้าดู")
+    if plan is None:
+        st.warning("ยังคำนวณโซนที่น่าเชื่อถือไม่ได้จากแท่งราคาที่ปิดแล้ว · "
+                   "ไม่มีการใช้ราคาเดาหรือราคาจากตลาดอื่นทดแทน")
+        return
+    st.info("**คาดการณ์เพื่อเฝ้าดูเท่านั้น — ยังเข้าไม่ได้** · "
+            "ตัวเลขปรับตามแท่งใหม่ ไม่ใช่คำสั่ง Limit หรือเป้ากำไรที่รับประกัน")
+    _price_grid([("รอราคาเข้า · LOW", plan.low), ("รอราคาเข้า · HIGH", plan.high),
+                 ("จุดยกเลิกสมมติฐาน", plan.invalidation),
+                 ("เป้าหมายจำลอง 1", plan.target_1),
+                 ("เป้าหมายจำลอง 2", plan.target_2)])
+    st.caption(f"{quote} · อ้างอิง {plan.basis} · "
+               "ถึงโซนต้องประเมินใหม่ทั้งแนวโน้ม Volume/Flow, Spread, Fee, "
+               "Stop และ Net R:R; ถ้าไม่ผ่านยังคง WAIT")
+
+
 @st.cache_data(ttl=45, show_spinner=False)
 def _scalp_live(venue: str, symbol: str, refresh_id: int):
     """Independent, venue-native public data; never call exchange order APIs."""
@@ -292,14 +325,23 @@ def scalp_screen() -> None:
         zones = scalp_watch_zones(snap, watch_side)
         if zones:
             st.markdown(f"**{'BUY / LONG — โซนแนวรับ' if watch_side == 'LONG' else 'SHORT — โซนแนวต้าน'}**")
-            rows = []
             for zone in zones:
                 label = {"IN_ZONE": "🟡 อยู่ในโซน · รอยืนยัน", "WATCH": "⚪ รอราคาเข้าโซน",
-                         "INVALIDATED": "🔴 แนวรับ/ต้านหลุด · ห้ามรับอัตโนมัติ"}[zone["state"]]
-                rows.append({"โซน": zone["name"],
-                             "ราคา": f"{concise_price(zone['low'])}–{concise_price(zone['high'])}",
-                             "สถานะ": label, "ที่มา": zone["basis"]})
-            st.table(pd.DataFrame(rows))
+                         "INVALIDATED": "🔴 แนวรับ/ต้านหลุด"}[zone["state"]]
+                css = ("in-zone" if zone["state"] == "IN_ZONE" else
+                       "invalid" if zone["state"] == "INVALIDATED" else "")
+                low, high = concise_price(zone["low"]), concise_price(zone["high"])
+                st.markdown(
+                    f'<div class="orb-zone {css}">'
+                    f'<div class="orb-zone-head"><span>{escape(zone["name"])}</span>'
+                    f'<span class="orb-zone-state">{escape(label)}</span></div>'
+                    f'<div class="orb-zone-prices">'
+                    f'<div class="orb-zone-price"><small>ราคาต่ำ (USDT)</small>{escape(low)}</div>'
+                    f'<div class="orb-zone-price"><small>ราคาสูง (USDT)</small>{escape(high)}</div>'
+                    f'</div>'
+                    f'<div class="orb-zone-sub">อ้างอิง: {escape(zone["basis"])}'
+                    f' · ห่างจากขอบโซน {zone["distance_pct"]:.2f}%</div></div>',
+                    unsafe_allow_html=True)
     st.caption("เมื่อแตะโซน ต้องรอแท่ง 1m ที่ปิดแล้วยืนยัน Volume/Flow, "
                "Spread, Stop Loss และ Net R:R ก่อนพิจารณาเข้า · "
                "ถึงโซนไม่ได้แปลว่า BUY READY; ต้องดูสถานะจากตัวประเมินด้านบน")
@@ -343,6 +385,11 @@ def _spot_chart(symbol: str) -> pd.DataFrame:
     return fetch_klines(symbol, "1h", 250).tail(90)[["close"]]
 
 
+@st.cache_data(ttl=180, show_spinner=False)
+def _spot_watch_candles(symbol: str) -> pd.DataFrame:
+    return fetch_klines(symbol, "1h", 90).tail(60)
+
+
 def _navigate_lab(symbol: str):
     # Button on_click callbacks run before the next rerun, safe for widget state.
     st.session_state["orbit_screen"] = LAB
@@ -378,9 +425,16 @@ def spot_screen(symbol: str, watch_token: str | None) -> None:
     _signal_card(look, symbol, observation.last_price, "BINANCE SPOT")
     st.markdown('<div class="orb-section"><strong>แผนราคา</strong><span class="orb-subtle">USDT · ไม่ใช่คำสั่งซื้อ</span></div>',
                 unsafe_allow_html=True)
-    _price_grid([("ENTRY LOW", observation.entry_low), ("ENTRY HIGH", observation.entry_high),
-                 ("STOP LOSS", observation.stop_loss), ("TAKE PROFIT 1", observation.tp1),
-                 ("TAKE PROFIT 2", observation.tp2)])
+    if observation.entry_low is None or observation.entry_high is None:
+        try:
+            estimated = indicative_zone(_spot_watch_candles(symbol))
+        except (ValueError, RuntimeError, KeyError, TypeError, OSError, IndexError):
+            estimated = None
+        _watch_price_panel(estimated, "Spot · รอซื้อจากแนวรับ")
+    else:
+        _price_grid([("ENTRY LOW", observation.entry_low), ("ENTRY HIGH", observation.entry_high),
+                     ("STOP LOSS", observation.stop_loss), ("TAKE PROFIT 1", observation.tp1),
+                     ("TAKE PROFIT 2", observation.tp2)])
     if observation.mode == "FROZEN":
         st.caption("🔒 แผนที่ล็อกไว้ · จุดราคาเดิมไม่ขยับตามตลาด")
     else:
@@ -450,7 +504,7 @@ def _futures_snapshot(symbol: str, capital: float, risk_pct: float):
     result = evaluate_futures(pair.contract, frames, last=last, mark=mark,
                               funding_pct=funding, now=now, settings=settings,
                               require_taker_flow=(source == "BINANCE"))
-    return replace(result, source=source), frames["15m"].tail(90)[["close"]], funding, pair, failure
+    return replace(result, source=source), frames["15m"].tail(90), funding, pair, failure
 
 
 def futures_screen(symbol: str) -> None:
@@ -507,15 +561,21 @@ def futures_screen(symbol: str) -> None:
 </div>""", unsafe_allow_html=True)
     st.markdown('<div class="orb-section"><strong>แผนเข้า–ออก</strong><span class="orb-subtle">ประเมินจาก Futures</span></div>',
                 unsafe_allow_html=True)
-    _price_grid([("ENTRY LOW", ob.entry_low), ("ENTRY HIGH", ob.entry_high),
-                 ("STOP LOSS", ob.stop), ("TAKE PROFIT 1", ob.tp1),
-                 ("TAKE PROFIT 2", ob.tp2)])
+    if ob.entry_low is None or ob.entry_high is None:
+        _watch_price_panel(indicative_zone(chart, side="LONG"),
+                           "Futures · แนวรับสำหรับเฝ้า LONG", quote)
+        _watch_price_panel(indicative_zone(chart, side="SHORT"),
+                           "Futures · แนวต้านสำหรับเฝ้า SHORT", quote)
+    else:
+        _price_grid([("ENTRY LOW", ob.entry_low), ("ENTRY HIGH", ob.entry_high),
+                     ("STOP LOSS", ob.stop), ("TAKE PROFIT 1", ob.tp1),
+                     ("TAKE PROFIT 2", ob.tp2)])
     if ob.state.startswith("READY"):
         st.success("แท่ง 15M ยืนยันแล้วและราคาล่าสุดยังอยู่ในโซน · ตรวจออร์เดอร์จริงก่อนตัดสินใจ")
     elif ob.state.startswith("WATCH"):
         st.info("รอ Retest — ยังไม่ใช่สัญญาณเข้า อย่าไล่ราคา")
     else:
-        st.caption("ยังไม่มีแผนเข้าที่ผ่านเงื่อนไข จึงไม่สร้างราคา Entry/SL/TP สมมติ")
+        st.caption("ยังไม่มีสัญญาณเข้าที่ผ่านเงื่อนไข · ราคาคาดการณ์ด้านบนเป็นเพียงโซนเฝ้าดู ไม่ใช่ Entry/SL/TP ที่อนุมัติ")
     if ob.net_rr_tp2 is not None:
         st.caption(f"Net R:R TP2 ≈ {ob.net_rr_tp2:.1f}:1 (ประเมินต้นทุน) · "
                    f"Risk จำลอง ≈ {ob.risk_usdt:.2f} {quote} · Notional ≈ {ob.notional_usdt:.2f} {quote}")
@@ -528,7 +588,7 @@ def futures_screen(symbol: str) -> None:
             st.rerun()
     st.markdown('<div class="orb-section"><strong>กราฟ Futures 15M</strong><span class="orb-subtle">แท่งที่ปิดแล้ว</span></div>',
                 unsafe_allow_html=True)
-    st.line_chart(chart, height=210)
+    st.line_chart(chart[["close"]], height=210)
     with st.expander("⚙️ ทุนและความเสี่ยงจำลอง", expanded=False):
         st.number_input(f"ทุนสมมติ ({quote})", min_value=100.0, max_value=10_000_000.0,
                         step=100.0, key="orbit_futures_capital")
