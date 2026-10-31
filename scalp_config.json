@@ -19,5 +19,9 @@
   "setup_expiry_minutes": 10,
   "ready_expiry_seconds": 180,
   "max_ready_alerts_per_day": 4,
-  "paper_only": true
+  "paper_only": true,
+  "enable_range_scalp": true,
+  "range_max_adx": 23.0,
+  "range_min_width_pct": 0.6,
+  "range_max_width_pct": 5.0
 }

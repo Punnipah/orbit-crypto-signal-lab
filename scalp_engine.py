@@ -42,6 +42,10 @@ class ScalpSettings:
     ready_expiry_seconds: int = 180
     max_ready_alerts_per_day: int = 4
     paper_only: bool = True
+    enable_range_scalp: bool = True
+    range_max_adx: float = 23.0
+    range_min_width_pct: float = 0.6
+    range_max_width_pct: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -65,11 +69,14 @@ class ScalpObservation:
     last_closed_1m: datetime | None = None
     expires_at: datetime | None = None
     setup_expires_at: datetime | None = None
+    strategy: str = "TREND_BREAKOUT"
+    market_regime: str = "UNCONFIRMED"
 
 
 def read_scalp_settings(path: Path | str) -> ScalpSettings:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    optional = {"bitget_futures_symbols"}
+    optional = {"bitget_futures_symbols", "enable_range_scalp", "range_max_adx",
+                "range_min_width_pct", "range_max_width_pct"}
     fields = set(ScalpSettings.__dataclass_fields__)
     if (not isinstance(payload, dict) or set(payload) - fields
             or not fields - optional <= set(payload)):
@@ -93,6 +100,8 @@ def read_scalp_settings(path: Path | str) -> ScalpSettings:
         "max_spread_bps": (1.0, 30.0), "min_depth_to_notional_ratio": (1.0, 50.0),
         "volume_multiplier": (1.0, 3.0), "min_taker_buy_share_long": (0.5, 0.75),
         "max_taker_buy_share_short": (0.25, 0.5),
+        "range_max_adx": (15.0, 27.0), "range_min_width_pct": (0.3, 2.0),
+        "range_max_width_pct": (2.0, 8.0),
     }
     for field, (lo, hi) in checks.items():
         val = getattr(obj, field)
@@ -104,7 +113,9 @@ def read_scalp_settings(path: Path | str) -> ScalpSettings:
         val = getattr(obj, field)
         if type(val) is not int or not lo <= val <= hi:
             raise ValueError(f"Scalp config {field} ต้องเป็นจำนวนเต็ม {lo}–{hi}")
-    if (obj.paper_only is not True or obj.daily_risk_budget_pct < obj.risk_per_trade_pct
+    if (type(obj.enable_range_scalp) is not bool or
+            obj.range_min_width_pct >= obj.range_max_width_pct or
+            obj.paper_only is not True or obj.daily_risk_budget_pct < obj.risk_per_trade_pct
             or obj.max_ready_alerts_per_day * obj.risk_per_trade_pct > obj.daily_risk_budget_pct):
         raise ValueError("ระบบต้องเป็น PAPER ONLY และผลรวมความเสี่ยงแจ้งเตือนต้องไม่เกินรายวัน")
     return obj
@@ -181,6 +192,134 @@ def _tick_price(value: float, tick: Decimal, rounding: str) -> float:
     return float((number / tick).to_integral_value(rounding=rounding) * tick)
 
 
+def _adx(frame: pd.DataFrame, period: int = 14) -> float:
+    """Wilder ADX on fully closed 5m candles; NaN means unknown, not sideways."""
+    up, down = frame.high.diff(), -frame.low.diff()
+    plus = up.where((up > down) & (up > 0), 0.0)
+    minus = down.where((down > up) & (down > 0), 0.0)
+    prev = frame.close.shift(1)
+    tr = pd.concat((frame.high - frame.low, (frame.high - prev).abs(),
+                    (frame.low - prev).abs()), axis=1).max(axis=1)
+    smoothed_tr = tr.ewm(alpha=1 / period, adjust=False).mean()
+    plus_di = 100 * plus.ewm(alpha=1 / period, adjust=False).mean() / smoothed_tr
+    minus_di = 100 * minus.ewm(alpha=1 / period, adjust=False).mean() / smoothed_tr
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, float("nan"))
+    return float(dx.ewm(alpha=1 / period, adjust=False).mean().iloc[-1])
+
+
+def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: datetime,
+                     atr: float, atr_pct: float, full_spread_limit: float) -> ScalpObservation | None:
+    """Independent bounded range-reversal setup, never a blind limit-order suggestion.
+
+    Require low ADX, material range vs costs, edge retest on closed candles,
+    and a recent *closed* 1m reversal with auditable taker-volume confirmation.
+    """
+    if not settings.enable_range_scalp:
+        return None
+    five, one = snapshot.frames["5m"], snapshot.frames["1m"]
+    if len(five) < 65 or len(one) < 30:
+        return None
+    adx = _adx(five)
+    if not math.isfinite(adx) or adx > settings.range_max_adx:
+        return None
+    # Exclude the latest bar when deriving the boundaries to avoid moving levels.
+    previous = five.iloc[-31:-1]
+    bottom, top = float(previous.low.min()), float(previous.high.max())
+    mid = (bottom + top) / 2
+    width_pct = (top - bottom) / mid * 100 if mid > 0 else 0
+    if not settings.range_min_width_pct <= width_pct <= settings.range_max_width_pct:
+        return None
+    current = float(one.close.iloc[-1])
+    edge_width = (top - bottom) * 0.22
+    if current < bottom - edge_width * .25 or current > top + edge_width * .25:
+        return None  # broken range, require reclassification on next scans
+    long_edge = current <= bottom + edge_width
+    short_edge = current >= top - edge_width
+    if not long_edge and not short_edge:
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "WAIT",
+                                f"SIDEWAYS · ADX {adx:.1f}; ราคาอยู่กลางกรอบ {bottom:.10g}–{top:.10g}",
+                                now, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    side = "LONG" if long_edge else "SHORT"
+    if snapshot.venue == "BINANCE_TH_SPOT" and side == "SHORT":
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "EXIT_WATCH",
+                                "SIDEWAYS · ใกล้แนวต้าน; Spot ขายได้เฉพาะเหรียญที่ถือ ไม่เปิด Short",
+                                now, side="SELL", strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    # A closed 5m candle must have actually visited the edge in the last 10m.
+    edge_touched = any((float(r.low) <= bottom + edge_width if side == "LONG"
+                        else float(r.high) >= top - edge_width)
+                       for _, r in five.tail(2).iterrows())
+    if not edge_touched:
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "WAIT",
+                                "SIDEWAYS · ยังไม่มีแท่ง 5m ทดสอบขอบกรอบล่าสุด", now,
+                                side=side, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    if snapshot.spread_bps > full_spread_limit or not 0.06 <= atr_pct <= 3.0:
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "RISK_BLOCK",
+                                "SIDEWAYS · Spread หรือ ATR ไม่ผ่านเกณฑ์", now,
+                                side=side, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    entry = snapshot.ask if side == "LONG" else snapshot.bid
+    fee = (settings.spot_fee_each_side_pct if snapshot.venue == "BINANCE_TH_SPOT"
+           else max(settings.futures_fee_each_side_pct, snapshot.instrument.taker_fee_pct or 0))
+    cost = 2 * (fee + settings.slippage_each_side_pct) / 100 + snapshot.spread_bps / 10_000
+    # Beyond the range edge, with a volatility cushion, tick rounded outward.
+    stop_raw = (bottom - .20 * atr) if side == "LONG" else (top + .20 * atr)
+    stop = _tick_price(stop_raw, snapshot.instrument.tick_price,
+                       ROUND_DOWN if side == "LONG" else ROUND_UP)
+    risk_fraction = abs(entry - stop) / entry
+    if not (stop < entry if side == "LONG" else stop > entry) or not .003 <= risk_fraction <= .025:
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "RISK_BLOCK",
+                                "SIDEWAYS · Stop นอกช่วงความเสี่ยง 0.3–2.5%", now,
+                                side=side, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    # TP2 strictly inside opposite boundary. Reject if costs erase net reward.
+    target_raw = (top - .15 * atr) if side == "LONG" else (bottom + .15 * atr)
+    tp2 = _tick_price(target_raw, snapshot.instrument.tick_price,
+                      ROUND_DOWN if side == "LONG" else ROUND_UP)
+    gain = (tp2 - entry) / entry if side == "LONG" else (entry - tp2) / entry
+    net_rr = (gain - cost) / (risk_fraction + cost)
+    if gain <= 0 or net_rr < settings.min_net_rr:
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "RISK_BLOCK",
+                                f"SIDEWAYS · โอกาสถึงฝั่งตรงข้ามไม่คุ้มต้นทุน (Net R:R {net_rr:.2f})", now,
+                                side=side, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    tp1 = _tick_price(entry + (tp2 - entry) * .55, snapshot.instrument.tick_price,
+                      ROUND_DOWN if side == "LONG" else ROUND_UP)
+    qty = _floor_step(min(settings.capital_usdt * settings.risk_per_trade_pct / 100 /
+                          (entry * (risk_fraction + cost)),
+                          settings.capital_usdt * settings.max_notional_multiple / entry),
+                      snapshot.instrument.step_qty)
+    notional = float(qty) * entry
+    if (qty < snapshot.instrument.min_qty or Decimal(str(notional)) < snapshot.instrument.min_notional
+            or min(snapshot.bid_depth_usdt, snapshot.ask_depth_usdt) <
+            notional * settings.min_depth_to_notional_ratio):
+        return ScalpObservation(snapshot.venue, snapshot.symbol, "RISK_BLOCK",
+                                "SIDEWAYS · จำนวนขั้นต่ำหรือ Depth ไม่เพียงพอ", now,
+                                side=side, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+    # The newest closed 1m candle must reverse at the edge, with complete
+    # taker-buy evidence. Bitget incomplete public fills => WATCH, never READY.
+    row = one.iloc[-1]
+    age = (now.timestamp() * 1000 - (int(row.open_ms) + 60_000)) / 1000
+    prior_volume = float(one.volume.iloc[-21:-1].mean())
+    ratio = float(row.taker_buy / row.volume) if row.volume > 0 else float("nan")
+    confirmed = (0 <= age <= settings.ready_expiry_seconds and
+                 float(row.volume) >= prior_volume * settings.volume_multiplier and
+                 ((side == "LONG" and row.close > row.open and
+                   ratio >= settings.min_taker_buy_share_long) or
+                  (side == "SHORT" and row.close < row.open and
+                   ratio <= settings.max_taker_buy_share_short)))
+    setup_open = int(five.open_ms.iloc[-1])
+    setup_id = hashlib.sha256(f"{snapshot.venue}:{snapshot.symbol}:RANGE:{side}:{setup_open}".encode()).hexdigest()[:24]
+    deadline = datetime.fromtimestamp((setup_open + 300_000) / 1000, timezone.utc) + timedelta(
+        minutes=settings.setup_expiry_minutes)
+    confirmed_at = datetime.fromtimestamp((int(row.open_ms) + 60_000) / 1000, timezone.utc) if confirmed else None
+    return ScalpObservation(snapshot.venue, snapshot.symbol, "READY" if confirmed else "WATCH",
+                            f"SIDEWAYS · ADX {adx:.1f} · {'1m กลับตัวยืนยัน' if confirmed else 'รอแท่ง 1m กลับตัวพร้อม Volume/Flow'}; "
+                            f"กรอบ {bottom:.10g}–{top:.10g}", now, side=side, setup_id=setup_id,
+                            entry=entry, stop=stop, tp1=tp1, tp2=tp2, qty=float(qty),
+                            notional_usdt=notional, risk_usdt=notional * (risk_fraction + cost),
+                            net_rr=net_rr, spread_bps=snapshot.spread_bps,
+                            last_closed_1m=confirmed_at,
+                            expires_at=confirmed_at + timedelta(seconds=settings.ready_expiry_seconds) if confirmed_at else None,
+                            setup_expires_at=deadline, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
+
+
 def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
                    *, now: datetime | None = None) -> ScalpObservation:
     now = now or snapshot.checked_at
@@ -205,6 +344,12 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     # This is a liquidity constraint, not an endorsement of profitable fills.
     adaptive_spread_bps = max(settings.max_spread_bps,
                               min(25.0, atr_pct * 100 * 0.25))
+    # Range strategies are independent of trend-breakout requirements; retain
+    # their own cost, depth, stop, volume and time-limited evidence gates.
+    range_result = _range_candidate(snapshot, settings, now, atr, atr_pct,
+                                    adaptive_spread_bps)
+    if range_result is not None:
+        return range_result
     if snapshot.spread_bps > adaptive_spread_bps:
         return status("RISK_BLOCK", f"Spread {snapshot.spread_bps:.1f} bps สูงเกิน"
                       f"เกณฑ์ตามความผันผวน {adaptive_spread_bps:.1f} bps")

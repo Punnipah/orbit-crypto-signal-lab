@@ -84,8 +84,9 @@ def message(ob: ScalpObservation, kind: str) -> str:
              "READY": "🟢 สัญญาณ Scalp ยืนยัน (มีเวลาจำกัด)",
              "CANCELLED": "🔴 ยกเลิก Setup (ห้ามใช้แผนเดิม)",
              "EXPIRED": "⚪ หมดเวลา Setup (ห้ามใช้แผนเดิม)"}[kind]
-    parts = [f"🪐 Orbit Scalp Signal v5.7 · {title}",
+    parts = [f"🪐 Orbit Scalp Signal v5.8 · {title}",
              f"{direction} | {ob.symbol}", f"ตลาด: {venue}",
+             f"กลยุทธ์: {ob.strategy} · ตลาด: {ob.market_regime}",
              f"สแกน: {ob.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} (ไทย)",
              f"เหตุผล: {ob.reason[:170]}"]
     if kind in ("WATCH", "READY") and ob.entry is not None:

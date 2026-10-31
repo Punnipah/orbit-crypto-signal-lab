@@ -154,7 +154,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.7</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.8</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -232,11 +232,11 @@ def _scalp_live(venue: str, symbol: str, refresh_id: int):
 
 
 def scalp_screen() -> None:
-    """Mobile review of v5.6 Spot TH/Futures Global signals and data health."""
+    """Mobile review of v5.8 AUTO REGIME Spot/Futures signals and health."""
     from scalp_marketdata import MarketDataError
 
-    st.markdown("## ⏱️ Scalp Signal v5.7")
-    st.caption("15m Trend → 5m Setup → 1m แท่งปิดยืนยัน · โหมด PAPER ONLY · ไม่มีการส่งออร์เดอร์")
+    st.markdown("## ⏱️ Scalp Signal v5.8 · AUTO REGIME")
+    st.caption("Trend Breakout หรือ Sideways Range Reversal → แท่ง 1m ปิดยืนยัน · PAPER ONLY · ไม่มีการส่งออร์เดอร์")
     market = st.radio("เลือกตลาด", ["Spot · Binance TH", "Futures · Binance Global",
                                    "Futures · Bitget (ตลาดแยก)"],
                       horizontal=True, key="scalp_market")
@@ -271,6 +271,8 @@ def scalp_screen() -> None:
                 f'<div class="orb-hero-value">{escape(heading)}</div>'
                 f'<div class="orb-hero-note">{escape(ob.reason)}</div></div>',
                 unsafe_allow_html=True)
+    st.caption(f"Market Regime: {ob.market_regime} · Strategy: {ob.strategy} · "
+               "Sideways จะเข้าใกล้ขอบกรอบเท่านั้น ไม่เข้าเมื่อราคากลางกรอบ")
     st.markdown(f"**Bid:** `{concise_price(snap.bid)}` · "
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "

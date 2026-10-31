@@ -1,4 +1,4 @@
-"""GitHub Actions v5.6 Scalp 5m cadence. Public data only, no order routes.
+"""GitHub Actions v5.8 AUTO REGIME 5m cadence. Public data, no orders.
 
 Usage:
   python -m scalp_runner --validate-config
@@ -55,7 +55,7 @@ def scan(settings: ScalpSettings, *, now: datetime | None = None) -> list[ScalpO
 
 def run(*, dry_run: bool = False) -> int:
     settings = read_scalp_settings(CONFIG)
-    print("Orbit Scalp v5.7: 15m/5m/1m; public read-only PAPER ONLY; no exchange orders", flush=True)
+    print("Orbit Scalp v5.8: AUTO REGIME Trend/Range; public read-only PAPER ONLY; no exchange orders", flush=True)
     if dry_run:
         state, store = empty_state(), None
     else:
@@ -101,7 +101,7 @@ def probe() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Orbit Scalp v5.7 · read-only")
+    parser = argparse.ArgumentParser(description="Orbit Scalp v5.8 · read-only")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--validate-config", action="store_true")
     mode.add_argument("--probe", action="store_true")
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.validate_config:
             settings = read_scalp_settings(CONFIG)
-            print(f"Valid Scalp v5.7 PAPER ONLY: Spot={settings.spot_symbols} "
+            print(f"Valid Scalp v5.8 PAPER ONLY: Spot={settings.spot_symbols} "
                   f"Futures={settings.futures_symbols} Bitget={settings.bitget_futures_symbols} "
                   f"capital={settings.capital_usdt} USDT")
             return 0
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.test_telegram:
             send_telegram(os.getenv("TELEGRAM_BOT_TOKEN", ""),
                           os.getenv("TELEGRAM_CHAT_ID", ""),
-                          "🧪 Orbit Scalp Signal v5.7 · Telegram TEST ONLY\n"
+                          "🧪 Orbit Scalp Signal v5.8 · Telegram TEST ONLY\n"
                           "Spot Binance TH / Futures Binance Global / Bitget Futures\n"
                           "PAPER ONLY · ไม่ใช่ BUY/LONG/SHORT และไม่ส่งคำสั่งซื้อขาย")
             print("Safe Telegram test sent")
