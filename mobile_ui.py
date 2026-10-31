@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parent
 BKK = ZoneInfo("Asia/Bangkok")
 SPOT = "🎯 Spot"
 FUTURES = "⚡ Futures"
+SCALP = "⏱️ Scalp"
 ALERTS = "🔔 Alerts"
 LAB = "🔬 Lab"
 
@@ -153,12 +154,12 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.4</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.6</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
 """, unsafe_allow_html=True)
-    value = st.segmented_control("เลือกหน้าจอ", [SPOT, FUTURES, ALERTS, LAB], default=SPOT,
+    value = st.segmented_control("เลือกหน้าจอ", [SPOT, FUTURES, SCALP, ALERTS, LAB], default=SPOT,
                                  key="orbit_screen", width="stretch", label_visibility="collapsed")
     return value or SPOT
 
@@ -217,6 +218,77 @@ def _price_grid(items: list[tuple[str, float | None]]) -> None:
     cards = "".join(f'<div class="orb-kv"><span class="orb-kv-label">{escape(label)}</span>'
                     f'<b>{escape(concise_price(val))}</b></div>' for label, val in items)
     st.markdown(f'<div class="orb-kv-grid">{cards}</div>', unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=45, show_spinner=False)
+def _scalp_live(venue: str, symbol: str, refresh_id: int):
+    """Independent, venue-native public data; never call exchange order APIs."""
+    from scalp_engine import evaluate_scalp, read_scalp_settings
+    from scalp_marketdata import fetch_snapshot
+
+    settings = read_scalp_settings(ROOT / "scalp_config.json")
+    snap = fetch_snapshot(venue, symbol)
+    return evaluate_scalp(snap, settings), snap, settings
+
+
+def scalp_screen() -> None:
+    """Mobile review of v5.6 Spot TH/Futures Global signals and data health."""
+    from scalp_marketdata import MarketDataError
+
+    st.markdown("## ⏱️ Scalp Signal v5.6")
+    st.caption("15m Trend → 5m Setup → 1m แท่งปิดยืนยัน · โหมด PAPER ONLY · ไม่มีการส่งออร์เดอร์")
+    market = st.radio("เลือกตลาด", ["Spot · Binance TH", "Futures · Binance Global"],
+                      horizontal=True, key="scalp_market")
+    venue = "BINANCE_TH_SPOT" if market.startswith("Spot") else "BINANCE_GLOBAL_USDM"
+    pairs = ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"]
+    symbol = st.selectbox("คู่เหรียญ USDT", pairs, key="scalp_symbol")
+    if "scalp_refresh" not in st.session_state:
+        st.session_state["scalp_refresh"] = 0
+    if st.button("🔄 ตรวจข้อมูลตลาดล่าสุด", key="scalp_refresh_button", width="stretch"):
+        st.session_state["scalp_refresh"] += 1
+    try:
+        with st.spinner("กำลังตรวจแท่งที่ปิดแล้ว, Bid/Ask, Depth และกฎตลาดจริง..."):
+            ob, snap, cfg = _scalp_live(venue, symbol, st.session_state["scalp_refresh"])
+    except (MarketDataError, ValueError, RuntimeError, OSError, TypeError, KeyError) as exc:
+        st.error("DATA UNAVAILABLE · ไม่สามารถยืนยันข้อมูลจากตลาดที่เลือกได้")
+        st.caption(str(exc)[:230])
+        if venue == "BINANCE_GLOBAL_USDM":
+            st.warning("Binance Global Futures อาจบล็อกเครือข่ายด้วย HTTP 451/403 · "
+                       "ระบบจะไม่เอาราคา Binance TH Spot หรือ Kraken มาสร้าง LONG/SHORT")
+        return
+    colors = {"READY": "good", "WATCH": "warning", "EXIT_WATCH": "warning",
+              "RISK_BLOCK": "danger"}
+    color = colors.get(ob.state, "warning")
+    heading = {"READY": "READY · พิจารณาได้เฉพาะช่วงเวลาสั้น ๆ",
+               "WATCH": "WATCH · ยังไม่ใช่สัญญาณเข้า",
+               "EXIT_WATCH": "SELL WATCH · Spot ขาลง",
+               "RISK_BLOCK": "RISK BLOCK · งดเข้า",
+               "WAIT": "WAIT · รอรูปแบบราคา"}.get(ob.state, ob.state)
+    st.markdown(f'<div class="orb-hero {color}">'
+                f'<div class="orb-hero-title">{escape(symbol)} · {escape(market)}</div>'
+                f'<div class="orb-hero-value">{escape(heading)}</div>'
+                f'<div class="orb-hero-note">{escape(ob.reason)}</div></div>',
+                unsafe_allow_html=True)
+    st.markdown(f"**Bid:** `{concise_price(snap.bid)}` · "
+                f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
+    st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
+               "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    if ob.entry is not None:
+        st.markdown("### แผนจำลอง (ไม่ใช่ออร์เดอร์)")
+        _price_grid([("Entry Bid/Ask", ob.entry), ("Stop Loss", ob.stop),
+                     ("TP1", ob.tp1), ("TP2", ob.tp2)])
+        st.caption(f"Position ~{ob.notional_usdt:.2f} USDT / Qty {ob.qty:g} · "
+                   f"ความเสี่ยงสุทธิจำลอง {ob.risk_usdt:.3f} USDT · "
+                   f"Net TP2 R:R ~{ob.net_rr:.2f}:1")
+        if ob.expires_at:
+            st.warning(f"READY หมดอายุ {ob.expires_at.astimezone(BKK):%H:%M:%S} น. "
+                       "· ก่อนซื้อให้ตรวจราคาจริงและ Spread ใหม่")
+    st.info(f"ทุนตั้งต้นจำลอง {cfg.capital_usdt:.0f} USDT · เสี่ยงต่อครั้ง "
+            f"{cfg.risk_per_trade_pct:.2f}% · เพดานความเสี่ยงของการแจ้งเตือน "
+            f"{cfg.daily_risk_budget_pct:.1f}%/วัน (ไม่ใช่ระบบติดตามออร์เดอร์จริง)")
+    st.caption("Telegram Scalp ทำงานจาก GitHub Actions ทุก ~5 นาทีเมื่อ Scheduler ทำงาน "
+               "· ปิดเว็บได้ · สัญญาณ 1 นาทีอาจพลาดเพราะรอบสแกน · "
+               "ต้องเปิดใช้งาน Workflow orbit-scalp-signal.yml ก่อน")
 
 
 @st.cache_data(ttl=120, show_spinner=False)

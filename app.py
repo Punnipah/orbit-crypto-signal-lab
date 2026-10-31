@@ -298,6 +298,8 @@ screen = mobile_ui.top_navigation()
 if screen != mobile_ui.LAB:
     if screen == mobile_ui.ALERTS:
         mobile_ui.alerts_screen()
+    elif screen == mobile_ui.SCALP:
+        mobile_ui.scalp_screen()
     else:
         active_symbol = mobile_ui.chosen_symbol(st.query_params.get("watch"))
         if screen == mobile_ui.FUTURES:
@@ -1039,14 +1041,17 @@ with tabs[5]:
     """)
 
 with tabs[6]:
-    st.subheader("📡 Telegram Monitor — Spot v4.2 / Futures Day Trade v1")
+    st.subheader("📡 Telegram Monitor — Auto Spot BUY / Futures LONG & SHORT")
     st.info("**ต้องตั้งค่า GitHub Actions และ Telegram เพียงครั้งแรกก่อน** · การเปิดแอปนี้ไม่ได้เปิดตัวตรวจเบื้องหลังให้เอง")
+    st.success("✅ **ไม่ต้อง Save หรือ Lock แผนเพื่อสแกนสด** · GitHub Actions สแกน Spot MTF "
+               "ทุกเหรียญใน Config อัตโนมัติตามรอบ 15 นาที แม้มีแผนเก่าที่ล็อกไว้ "
+               "และ Futures ตรวจ LONG/SHORT แยกต่างหากเมื่อข้อมูลพร้อม")
     st.markdown("""
-    1. หากอัปเกรดจาก v4.1 ให้อัปโหลด `app.py`, `rally_watch.py`, `alert_monitor.py`, `monitor_engine.py`, `monitor_alerts.py` ไปที่ root ของ GitHub เดิม (ไม่ต้องสร้าง Bot หรือ Secrets ใหม่; `monitor_config.json` ของเดิมใช้ต่อได้)
+    1. หากอัปเกรด Monitor อัตโนมัติ ให้อัปโหลด `app.py`, `alert_monitor.py`, `monitor_engine.py`, `monitor_alerts.py` ไปที่ root ของ GitHub เดิม (ไม่ต้องสร้าง Bot หรือ Secrets ใหม่; `monitor_config.json` ของเดิมใช้ต่อได้)
     2. สร้างบอท Telegram ด้วย **@BotFather** แล้วเริ่มแชตกับบอทเพื่ออนุญาตให้ส่งข้อความ
     3. เพิ่ม GitHub **Actions Secrets** `TELEGRAM_BOT_TOKEN` และ `TELEGRAM_CHAT_ID` (ห้ามส่ง Token ในแชตหรือใส่ลงไฟล์ GitHub)
     4. เปิด GitHub **Actions → Orbit Telegram Signal Monitor → Run workflow** เลือก **Send test** เพื่อทดสอบข้อความ
-    5. หากต้องการใช้ **Entry Zone ที่ล็อกไว้** ให้คัดลอกลิงก์จากด้านล่าง แล้วบันทึกเป็น Secret `ORBIT_WATCH_LINKS` ทีละบรรทัด เช่น `PEPEUSDT=ลิงก์แผน`; ถ้าไม่ใส่ ระบบตรวจเฉพาะ MTF สดและจะบอกชัดว่า *ยังไม่มีแผนล็อก*
+    5. `ORBIT_WATCH_LINKS` เป็น **ตัวเลือกเสริมเท่านั้น**: ถ้ามี ระบบจะตรวจ *ทั้ง MTF สดและแผนล็อก* แยกกัน; ถ้าไม่มี จะตรวจ MTF สดตามปกติ **ไม่ต้อง Save แผนก่อน**
     6. ข้อมูล CoinGlass ต้องกรอกเอง และสามารถนำค่าที่บันทึกไปเติมใน `monitor_coinglass_manual.json` (ถ้าเก่าเกิน 1 ชม. จะเป็นตัวกรองไม่ผ่าน)
     7. หากราคา **พุ่งหนีโซนโดยไม่เคยแตะ** จะมี `BREAKOUT_WATCH` / `MISSED_ENTRY` เฉพาะเมื่อแท่งปิด 15m และ Volume ยืนยัน; `NEW_SETUP_CANDIDATE` ต้องมี MTF สด READY และโซนใหม่ที่ไม่ไล่ราคา (ทั้งหมดไม่ใช่ BUY)
 
@@ -1059,7 +1064,7 @@ with tabs[6]:
         value = f"{symbol}={base_url}?watch={current_token}" if base_url else f"{symbol}={current_token}"
         st.code(value, language=None, wrap_lines=True)
     else:
-        st.warning("ยังไม่มีแผนล็อกของเหรียญที่กำลังดู · กลับไปแท็บ 🎯 แล้วกด 🧷 ล็อก Entry Zone ก่อน")
+        st.info("ยังไม่มีแผนล็อกก็ใช้งาน Auto BUY ได้ · ถ้าต้องการเฝ้าราคาเดิมค่อยล็อกแผนเพิ่มเติม")
     current_snapshot = st.session_state.get("coinglass_snapshot")
     if current_snapshot is not None and current_snapshot.symbol == selected["base"]:
         cg_data = {"snapshots": {current_snapshot.symbol: {
@@ -1075,7 +1080,9 @@ with tabs[6]:
         st.caption("หากติดตามหลายเหรียญ ให้รวมข้อมูลของแต่ละเหรียญอยู่ใต้ `snapshots` ในไฟล์เดียว ไม่ใช่อัปโหลด JSON หลายไฟล์")
     else:
         st.caption("CoinGlass: ยังไม่มีค่า Manual ที่บันทึกของเหรียญนี้ในเซสชัน · ระบบ Telegram จะระบุ NOT_ENTERED และไม่สมมติค่า")
-    st.warning("GitHub Actions อาจรันช้าหรือข้ามรอบตามภาระระบบ; Telegram ไม่ใช่สัญญาณเรียลไทม์ และการแจ้ง READY เป็นกฎทดลองที่ยังไม่ผ่าน Full Walk-forward")
+    st.warning("GitHub Actions อาจรันช้าหรือข้ามรอบตามภาระระบบ; Telegram ไม่ใช่สัญญาณเรียลไทม์ "
+               "และการแจ้ง READY เป็นกฎทดลองที่ยังไม่ผ่าน Full Walk-forward · "
+               "Futures สำรองจาก Kraken/Bybit ยังเป็น WATCH ONLY เมื่อไม่มีข้อมูล Taker Flow ยืนยัน")
 
 
 @st.fragment(run_every="180s")
