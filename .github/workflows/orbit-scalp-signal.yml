@@ -1,4 +1,4 @@
-name: Orbit Scalp Signal v5.6 (Spot TH / Futures Global)
+name: Orbit Scalp Signal v5.7 (Spot TH / Futures Global / Bitget)
 
 on:
   schedule:
@@ -14,6 +14,7 @@ on:
         options:
           - probe
           - dry_run
+          - research
           - test_telegram
           - live_alerts
         default: probe
@@ -48,6 +49,9 @@ jobs:
       - name: Dry-run signal engine (no Telegram)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dry_run' }}
         run: python -m scalp_runner --dry-run
+      - name: Historical 5m volatility study (not a win-rate backtest)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'research' }}
+        run: python -m scalp_runner --research
       - name: Send a safe Telegram test
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'test_telegram' }}
         env:
