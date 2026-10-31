@@ -1,6 +1,7 @@
 {
   "spot_symbols": ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"],
   "futures_symbols": ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"],
+  "bitget_futures_symbols": ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"],
   "capital_usdt": 80.0,
   "risk_per_trade_pct": 0.25,
   "daily_risk_budget_pct": 1.0,

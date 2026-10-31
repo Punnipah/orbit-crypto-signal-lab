@@ -37,6 +37,7 @@ class Instrument:
     step_qty: Decimal
     min_notional: Decimal
     tick_price: Decimal
+    taker_fee_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,9 @@ def venue_base(venue: str) -> tuple[str, str]:
 
 
 def get_exchange_catalog(venue: str) -> dict[str, Instrument]:
+    if venue == "BITGET_USDT_FUTURES":
+        from scalp_bitget import get_bitget_catalog
+        return get_bitget_catalog()
     base, prefix = venue_base(venue)
     payload = _get_json(base, prefix + "/exchangeInfo")
     if not isinstance(payload, dict) or not isinstance(payload.get("symbols"), list):
@@ -196,6 +200,9 @@ def parse_depth(payload: object) -> tuple[float, float]:
 
 def fetch_snapshot(venue: str, symbol: str, *, catalog: dict[str, Instrument] | None = None,
                    now: datetime | None = None) -> MarketSnapshot:
+    if venue == "BITGET_USDT_FUTURES":
+        from scalp_bitget import fetch_bitget_snapshot
+        return fetch_bitget_snapshot(symbol, catalog=catalog, now=now)
     if not isinstance(symbol, str) or not SYMBOL.fullmatch(symbol):
         raise MarketDataError("Symbol ต้องเป็นคู่ USDT ที่ถูกต้อง")
     if now is None:
@@ -219,6 +226,19 @@ def fetch_snapshot(venue: str, symbol: str, *, catalog: dict[str, Instrument] | 
         frames[tf] = parse_closed_klines(rows, tf, now)
     quote = _get_json(base, prefix + "/ticker/bookTicker", {"symbol": symbol})
     bid, ask = parse_quote(quote, symbol)
+    if venue == "BINANCE_GLOBAL_USDM":
+        premium = _get_json(base, prefix + "/premiumIndex", {"symbol": symbol})
+        try:
+            if premium["symbol"] != symbol:
+                raise ValueError("symbol mismatch")
+            mark = float(premium["markPrice"])
+            funding = float(premium["lastFundingRate"])
+        except (ValueError, TypeError, KeyError):
+            raise MarketDataError("Futures mark/funding unavailable") from None
+        if (not math.isfinite(mark) or mark <= 0 or not math.isfinite(funding)
+                or abs(mark / ((bid + ask) / 2) - 1) > 0.005
+                or abs(funding) > 0.003):
+            raise MarketDataError("Futures mark/last deviation or funding too large")
     depth = _get_json(base, prefix + "/depth", {"symbol": symbol, "limit": 20})
     bid_depth, ask_depth = parse_depth(depth)
     # Avoid a correct but old candle series paired with a wildly different

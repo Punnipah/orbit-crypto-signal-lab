@@ -154,7 +154,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.6</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.7</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -235,11 +235,13 @@ def scalp_screen() -> None:
     """Mobile review of v5.6 Spot TH/Futures Global signals and data health."""
     from scalp_marketdata import MarketDataError
 
-    st.markdown("## ⏱️ Scalp Signal v5.6")
+    st.markdown("## ⏱️ Scalp Signal v5.7")
     st.caption("15m Trend → 5m Setup → 1m แท่งปิดยืนยัน · โหมด PAPER ONLY · ไม่มีการส่งออร์เดอร์")
-    market = st.radio("เลือกตลาด", ["Spot · Binance TH", "Futures · Binance Global"],
+    market = st.radio("เลือกตลาด", ["Spot · Binance TH", "Futures · Binance Global",
+                                   "Futures · Bitget (ตลาดแยก)"],
                       horizontal=True, key="scalp_market")
-    venue = "BINANCE_TH_SPOT" if market.startswith("Spot") else "BINANCE_GLOBAL_USDM"
+    venue = ("BINANCE_TH_SPOT" if market.startswith("Spot") else
+             "BITGET_USDT_FUTURES" if "Bitget" in market else "BINANCE_GLOBAL_USDM")
     pairs = ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"]
     symbol = st.selectbox("คู่เหรียญ USDT", pairs, key="scalp_symbol")
     if "scalp_refresh" not in st.session_state:
@@ -289,6 +291,11 @@ def scalp_screen() -> None:
     st.caption("Telegram Scalp ทำงานจาก GitHub Actions ทุก ~5 นาทีเมื่อ Scheduler ทำงาน "
                "· ปิดเว็บได้ · สัญญาณ 1 นาทีอาจพลาดเพราะรอบสแกน · "
                "ต้องเปิดใช้งาน Workflow orbit-scalp-signal.yml ก่อน")
+    if venue == "BITGET_USDT_FUTURES":
+        st.warning("Bitget เป็นตลาด Futures คนละแห่งกับ Binance Global · "
+                   "READY ต้องมี Public Trade Fills Buy/Sell (ไม่ใช่ Taker ที่รับรอง) "
+                   "ซึ่งตรวจยอดทั้งแท่ง 1m ได้ครบจริง · "
+                   "ถ้าข้อมูลไม่ครบจะไม่มี READY · ไม่ใช้เป็นราคาเข้า Binance Global")
 
 
 @st.cache_data(ttl=120, show_spinner=False)

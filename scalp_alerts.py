@@ -77,12 +77,14 @@ def message(ob: ScalpObservation, kind: str) -> str:
     direction = ("แผนเดิม" if kind in ("CANCELLED", "EXPIRED") else
                  "SPOT BUY" if ob.venue == "BINANCE_TH_SPOT" else
                  "FUTURES LONG" if ob.side == "LONG" else "FUTURES SHORT")
-    venue = "Binance TH · Spot" if ob.venue == "BINANCE_TH_SPOT" else "Binance Global · USDⓈ-M"
+    venue = ("Binance TH · Spot" if ob.venue == "BINANCE_TH_SPOT" else
+             "Bitget · USDT Perpetual" if ob.venue == "BITGET_USDT_FUTURES" else
+             "Binance Global · USDⓈ-M")
     title = {"WATCH": "🟡 เฝ้าดู (ยังไม่เข้าซื้อ)",
              "READY": "🟢 สัญญาณ Scalp ยืนยัน (มีเวลาจำกัด)",
              "CANCELLED": "🔴 ยกเลิก Setup (ห้ามใช้แผนเดิม)",
              "EXPIRED": "⚪ หมดเวลา Setup (ห้ามใช้แผนเดิม)"}[kind]
-    parts = [f"🪐 Orbit Scalp Signal v5.6 · {title}",
+    parts = [f"🪐 Orbit Scalp Signal v5.7 · {title}",
              f"{direction} | {ob.symbol}", f"ตลาด: {venue}",
              f"สแกน: {ob.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} (ไทย)",
              f"เหตุผล: {ob.reason[:170]}"]
@@ -98,6 +100,9 @@ def message(ob: ScalpObservation, kind: str) -> str:
               "ตรวจ Spread, ราคา, ค่าธรรมเนียม และจำนวนขั้นต่ำในบัญชีจริงก่อนตัดสินใจ"]
     if ob.venue == "BINANCE_GLOBAL_USDM":
         parts.append("⚠️ Futures เสี่ยงถูกบังคับปิดสถานะ; ไม่แนะนำ Leverage สำหรับทุนเล็ก")
+    if ob.venue == "BITGET_USDT_FUTURES":
+        parts.append("⚠️ ราคาจาก Bitget Futures เท่านั้น ไม่ใช่จุดเข้า Binance Global; "
+                     "ต้องเช็กตลาดและสัญญาจริงก่อนใช้")
     return "\n".join(parts)[:3900]
 
 

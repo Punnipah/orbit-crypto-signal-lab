@@ -23,6 +23,7 @@ from scalp_marketdata import MarketSnapshot
 class ScalpSettings:
     spot_symbols: tuple[str, ...]
     futures_symbols: tuple[str, ...]
+    bitget_futures_symbols: tuple[str, ...] = ()
     capital_usdt: float = 80.0
     risk_per_trade_pct: float = 0.25
     daily_risk_budget_pct: float = 1.0
@@ -68,11 +69,17 @@ class ScalpObservation:
 
 def read_scalp_settings(path: Path | str) -> ScalpSettings:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or set(payload) != set(ScalpSettings.__dataclass_fields__):
+    optional = {"bitget_futures_symbols"}
+    fields = set(ScalpSettings.__dataclass_fields__)
+    if (not isinstance(payload, dict) or set(payload) - fields
+            or not fields - optional <= set(payload)):
         raise ValueError("Scalp config ต้องมีฟิลด์ตรงตาม v5.6 ครบทุกตัว")
-    for k in ("spot_symbols", "futures_symbols"):
+    for k in ("spot_symbols", "futures_symbols", "bitget_futures_symbols"):
+        if k not in payload:
+            continue
         vals = payload[k]
-        if (not isinstance(vals, list) or not 1 <= len(vals) <= 12 or len(set(vals)) != len(vals)
+        min_len = 0 if k == "bitget_futures_symbols" else 1
+        if (not isinstance(vals, list) or not min_len <= len(vals) <= 12 or len(set(vals)) != len(vals)
                 or any(not isinstance(v, str) or not v.isupper() or not v.endswith("USDT")
                        or len(v) > 22 for v in vals)):
             raise ValueError(f"{k} ต้องเป็นคู่ USDT ไม่ซ้ำ")
@@ -186,14 +193,21 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
 
     if not 0 <= (now - snapshot.checked_at).total_seconds() <= 60:
         return status("DATA_UNAVAILABLE", "Quote เก่ากว่า 60 วินาที")
-    if snapshot.spread_bps > settings.max_spread_bps:
-        return status("RISK_BLOCK", f"Spread {snapshot.spread_bps:.1f} bps สูงเกิน {settings.max_spread_bps:.0f}")
     fifteen = snapshot.frames["15m"]
     five = snapshot.frames["5m"]
     one = snapshot.frames["1m"]
     atr = _atr(five)
     current = float(one.close.iloc[-1])
     atr_pct = atr / current * 100
+    # On highly volatile coins a fixed 12-bps cap blocks the market all day.
+    # Permit spread up to 25% of recent 5m ATR (absolute ceiling 25 bps),
+    # while still counting the ACTUAL observed spread as a trading cost below.
+    # This is a liquidity constraint, not an endorsement of profitable fills.
+    adaptive_spread_bps = max(settings.max_spread_bps,
+                              min(25.0, atr_pct * 100 * 0.25))
+    if snapshot.spread_bps > adaptive_spread_bps:
+        return status("RISK_BLOCK", f"Spread {snapshot.spread_bps:.1f} bps สูงเกิน"
+                      f"เกณฑ์ตามความผันผวน {adaptive_spread_bps:.1f} bps")
     if not 0.10 <= atr_pct <= 3.0:
         return status("RISK_BLOCK", f"ATR 5m = {atr_pct:.2f}% ไม่เหมาะกับทุน Scalp")
     ema9, ema21 = _ema(fifteen.close, 9), _ema(fifteen.close, 21)
@@ -247,7 +261,7 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
         return status("RISK_BLOCK", f"Stop ห่างราคา {risk_fraction*100:.2f}% นอกกรอบ 0.3–2.5%",
                       side=side, setup_id=setup_id)
     fee = (settings.spot_fee_each_side_pct if snapshot.venue == "BINANCE_TH_SPOT"
-           else settings.futures_fee_each_side_pct)
+           else max(settings.futures_fee_each_side_pct, snapshot.instrument.taker_fee_pct or 0))
     # Price targets use the reference bid/ask, but add the observed spread as
     # a separate conservative round-trip budget for possible exit widening.
     full_cost = 2 * (fee + settings.slippage_each_side_pct) / 100 + snapshot.spread_bps / 10_000
@@ -289,9 +303,11 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     if confirmation and expires and expires <= now:
         confirmation = None
         expires = None
+    source_note = ("Public Fills Buy/Sell (ไม่ใช่ Taker ที่รับรอง)"
+                   if snapshot.venue == "BITGET_USDT_FUTURES" else "Taker Flow")
     return status("READY" if confirmation else "WATCH",
-                  "ผ่าน 15m/5m และแท่ง 1m ปิดยืนยัน; ตรวจราคาอีกครั้งก่อนตัดสินใจ" if confirmation
-                  else "พบกรอบ 5m; รอ 1m Volume + Taker Flow ยืนยัน (ยังไม่ใช่จุดซื้อ)",
+                  f"ผ่าน 15m/5m และแท่ง 1m {source_note} ยืนยัน; ตรวจราคาอีกครั้ง" if confirmation
+                  else f"พบกรอบ 5m; รอ 1m Volume + {source_note} ยืนยัน (ยังไม่ใช่จุดซื้อ)",
                   side=side, setup_id=setup_id, entry=entry, stop=stop, tp1=tp1, tp2=tp2,
                   qty=float(qty_dec), notional_usdt=notional,
                   risk_usdt=notional * (risk_fraction + full_cost), net_rr=net_rr,

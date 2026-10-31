@@ -25,7 +25,8 @@ from scalp_marketdata import MarketDataError, fetch_snapshot, get_exchange_catal
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "scalp_config.json"
 VENUES = (("BINANCE_TH_SPOT", "spot_symbols"),
-          ("BINANCE_GLOBAL_USDM", "futures_symbols"))
+          ("BINANCE_GLOBAL_USDM", "futures_symbols"),
+          ("BITGET_USDT_FUTURES", "bitget_futures_symbols"))
 
 
 def scan(settings: ScalpSettings, *, now: datetime | None = None) -> list[ScalpObservation]:
@@ -54,7 +55,7 @@ def scan(settings: ScalpSettings, *, now: datetime | None = None) -> list[ScalpO
 
 def run(*, dry_run: bool = False) -> int:
     settings = read_scalp_settings(CONFIG)
-    print("Orbit Scalp v5.6: 15m/5m/1m; public read-only PAPER ONLY; no exchange orders", flush=True)
+    print("Orbit Scalp v5.7: 15m/5m/1m; public read-only PAPER ONLY; no exchange orders", flush=True)
     if dry_run:
         state, store = empty_state(), None
     else:
@@ -85,37 +86,50 @@ def probe() -> int:
     obs = scan(settings)
     n_spot = sum(v.venue == "BINANCE_TH_SPOT" and v.state != "DATA_UNAVAILABLE" for v in obs)
     n_futures = sum(v.venue == "BINANCE_GLOBAL_USDM" and v.state != "DATA_UNAVAILABLE" for v in obs)
+    n_bitget = sum(v.venue == "BITGET_USDT_FUTURES" and v.state != "DATA_UNAVAILABLE" for v in obs)
     print(f"PROBE coverage Spot Binance TH={n_spot}/{len(settings.spot_symbols)}; "
-          f"Futures Binance Global={n_futures}/{len(settings.futures_symbols)}", flush=True)
+          f"Futures Binance Global={n_futures}/{len(settings.futures_symbols)}; "
+          f"Futures Bitget={n_bitget}/{len(settings.bitget_futures_symbols)}", flush=True)
     if n_spot == 0:
         print("No Binance TH Spot coverage: STOP, check region/network/endpoint", flush=True)
         return 2
     if n_futures == 0:
         print("Futures Global unavailable (e.g. HTTP 451): Futures READY disabled; no fallback", flush=True)
+    if settings.bitget_futures_symbols and n_bitget == 0:
+        print("Bitget Futures unavailable: independent Futures signals disabled", flush=True)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Orbit Scalp v5.6 · read-only")
+    parser = argparse.ArgumentParser(description="Orbit Scalp v5.7 · read-only")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--validate-config", action="store_true")
     mode.add_argument("--probe", action="store_true")
+    mode.add_argument("--research", action="store_true")
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--test-telegram", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.validate_config:
             settings = read_scalp_settings(CONFIG)
-            print(f"Valid Scalp v5.6 PAPER ONLY: Spot={settings.spot_symbols} "
-                  f"Futures={settings.futures_symbols} capital={settings.capital_usdt} USDT")
+            print(f"Valid Scalp v5.7 PAPER ONLY: Spot={settings.spot_symbols} "
+                  f"Futures={settings.futures_symbols} Bitget={settings.bitget_futures_symbols} "
+                  f"capital={settings.capital_usdt} USDT")
             return 0
         if args.probe:
             return probe()
+        if args.research:
+            from scalp_research import research_spot
+            settings = read_scalp_settings(CONFIG)
+            print("Historical descriptive ATR study only; NOT a backtest or win-rate")
+            for sym, result in research_spot(settings.spot_symbols).items():
+                print(f"{sym}: {result}", flush=True)
+            return 0
         if args.test_telegram:
             send_telegram(os.getenv("TELEGRAM_BOT_TOKEN", ""),
                           os.getenv("TELEGRAM_CHAT_ID", ""),
-                          "🧪 Orbit Scalp Signal v5.6 · Telegram TEST ONLY\n"
-                          "Spot Binance TH / Futures Binance Global\n"
+                          "🧪 Orbit Scalp Signal v5.7 · Telegram TEST ONLY\n"
+                          "Spot Binance TH / Futures Binance Global / Bitget Futures\n"
                           "PAPER ONLY · ไม่ใช่ BUY/LONG/SHORT และไม่ส่งคำสั่งซื้อขาย")
             print("Safe Telegram test sent")
             return 0
