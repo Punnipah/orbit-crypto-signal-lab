@@ -171,7 +171,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.8.1</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.8.2</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -235,6 +235,31 @@ def _price_grid(items: list[tuple[str, float | None]]) -> None:
     cards = "".join(f'<div class="orb-kv"><span class="orb-kv-label">{escape(label)}</span>'
                     f'<b>{escape(concise_price(val))}</b></div>' for label, val in items)
     st.markdown(f'<div class="orb-kv-grid">{cards}</div>', unsafe_allow_html=True)
+
+
+def _fixed_tp_panel(plan, *, approved_signal: bool = False) -> None:
+    """Display an independent 10-USDT price-move plan with honest blockers."""
+    label = "LONG" if plan.side == "LONG" else "SHORT"
+    st.markdown(f"**{label} · TP ระยะราคา 10 USDT**"
+                + (" · หลังยืนยันสัญญาณ" if approved_signal else " · ตัวอย่างจากราคาล่าสุด"))
+    _price_grid([("ราคาอ้างอิง (USDT)", plan.entry),
+                 ("ราคา TP +/−10 USDT", plan.target)])
+    if plan.move_pct is not None:
+        st.caption(f"ระยะราคา {plan.move_pct:,.3f}% · "
+                   f"Notional จำลอง {plan.notional_usdt:.2f} USDT")
+    if plan.gross_profit_usdt is not None:
+        st.caption(f"กำไรก่อนต้นทุนประมาณ {plan.gross_profit_usdt:+.4f} USDT · "
+                   f"Fee/Spread/Slippage ประมาณ {plan.estimated_cost_usdt:.4f} USDT · "
+                   f"สุทธิประมาณ {plan.estimated_net_usdt:+.4f} USDT"
+                   + (f" · Net R:R {plan.net_rr:.2f}:1" if plan.net_rr is not None else ""))
+    if plan.state == "ALTERNATIVE_READY":
+        st.success("🟢 TP 10 USDT ผ่านเกณฑ์จำลอง · " + plan.reason)
+    elif plan.state == "WATCH_ONLY":
+        st.info("⚪ TP 10 USDT เป็นเพียงตัวอย่างราคา · " + plan.reason)
+    else:
+        st.error("🔴 TP 10 USDT ไม่ผ่านเกณฑ์ · " + plan.reason)
+    st.caption("10 USDT หมายถึงผลต่างของราคาต่อ 1 เหรียญ/สัญญาตามคู่ราคา "
+               "ไม่ใช่กำไรสุทธิ 10 USDT ของทั้งไม้ · PAPER ONLY")
 
 
 def _watch_price_panel(plan, title: str, quote: str = "USDT") -> None:
@@ -301,7 +326,9 @@ def scalp_screen() -> None:
     from scalp_engine import scalp_evidence, scalp_watch_zones
     from zone_signal import evaluate_zone
 
-    st.markdown("## 🎯 Scalp Signal v5.8.1 · LIVE ZONE DECISION")
+    from scalp_fixed_tp import fixed_tp_preview
+
+    st.markdown("## 🎯 Scalp Signal v5.8.2 · LIVE ZONE DECISION")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -312,6 +339,13 @@ def scalp_screen() -> None:
              "BITGET_USDT_FUTURES" if "Bitget" in market else "BINANCE_GLOBAL_USDM")
     pairs = ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"]
     symbol = st.selectbox("คู่เหรียญ USDT", pairs, key="scalp_symbol")
+    tp_mode = st.segmented_control(
+        "รูปแบบ Take Profit", ["TP ตามแผนเดิม", "🎯 TP ระยะราคา 10 USDT"],
+        key="scalp_tp_mode", default="TP ตามแผนเดิม", width="stretch")
+    fixed_tp = tp_mode == "🎯 TP ระยะราคา 10 USDT"
+    if fixed_tp:
+        st.caption("โหมดนี้เพิ่มเป้ากำไรทางเลือกโดยไม่เปลี่ยนจุดเข้าหรือ Stop Loss เดิม · "
+                   "หากต้นทุนหรือ Net R:R ไม่ผ่าน จะไม่อนุมัติ TP 10 USDT")
     if "scalp_refresh" not in st.session_state:
         st.session_state["scalp_refresh"] = 0
     if st.button("🔄 ตรวจข้อมูลตลาดล่าสุด", key="scalp_refresh_button", width="stretch"):
@@ -339,6 +373,9 @@ def scalp_screen() -> None:
                 f'<div class="orb-hero-value">{escape(heading)}</div>'
                 f'<div class="orb-hero-note">{escape(ob.reason)}</div></div>',
                 unsafe_allow_html=True)
+    if fixed_tp and ob.state == "READY":
+        st.warning("READY ด้านบนเป็นสัญญาณตาม TP เดิมเท่านั้น · "
+                   "TP 10 USDT ต้องผ่านค่าธรรมเนียมและ Net R:R แยก จึงจะใช้เป็นแผนทางเลือกได้")
     st.caption(f"Market Regime: {ob.market_regime} · Strategy: {ob.strategy} · "
                "Sideways จะเข้าใกล้ขอบกรอบเท่านั้น ไม่เข้าเมื่อราคากลางกรอบ")
     if ob.early_reversal_note:
@@ -347,6 +384,12 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    if fixed_tp:
+        st.markdown("### 🎯 ตัวอย่าง TP ระยะราคา 10 USDT (ยังไม่ใช่สัญญาณเข้า)")
+        sides = (["LONG"] if venue == "BINANCE_TH_SPOT" else
+                 [ob.side] if ob.side in ("LONG", "SHORT") else ["LONG", "SHORT"])
+        for example_side in sides:
+            _fixed_tp_panel(fixed_tp_preview(snap, cfg, example_side))
     _support_resistance_panel(snap.frames["5m"], current_price=(snap.bid + snap.ask) / 2)
     st.markdown("### 🗺️ โซนเฝ้าราคา (สูงสุด 3 โซน · แสดงแม้ WAIT)")
     st.caption("เลือกเฉพาะแนวที่ยังไม่ถูกทะลุจาก EMA21 / จุดกลับตัว / แท่ง 5m ปิดแล้ว · "
@@ -395,10 +438,22 @@ def scalp_screen() -> None:
                     st.info("โซนยืนยันซ้อนกัน · ใช้โซนที่ใกล้ราคามากที่สุดเป็นแผนหลักเพียงหนึ่งโซน")
                 elif decision.state == "ZONE_READY":
                     st.success(f"{label} · {decision.reason}")
-                    _price_grid([("ENTRY ล่าสุด", decision.entry), ("STOP LOSS", decision.stop),
-                                 ("TP1 จำลอง", decision.tp1), ("TP2 จำลอง", decision.tp2)])
-                    st.caption(f"Net R:R ~{decision.net_rr:.2f}:1 · Qty จำลอง {decision.qty:g} · "
-                               f"หมดอายุ {decision.expires_at.astimezone(BKK):%H:%M:%S} น. · "
+                    if fixed_tp:
+                        st.caption("แผนเดิมผ่าน READY แต่ต้องตรวจ TP 10 USDT แยกอีกครั้ง")
+                        _price_grid([("ENTRY ที่ยืนยัน", decision.entry),
+                                     ("STOP LOSS เดิม", decision.stop)])
+                        _fixed_tp_panel(fixed_tp_preview(
+                            snap, cfg, watch_side, entry=decision.entry,
+                            stop=decision.stop, qty=decision.qty, signal_ready=True),
+                            approved_signal=True)
+                        with st.expander("TP1/TP2 ของแผนเดิม (ยังคงอยู่)"):
+                            _price_grid([("TP1 เดิม", decision.tp1),
+                                         ("TP2 เดิม", decision.tp2)])
+                    else:
+                        _price_grid([("ENTRY ล่าสุด", decision.entry), ("STOP LOSS", decision.stop),
+                                     ("TP1 จำลอง", decision.tp1), ("TP2 จำลอง", decision.tp2)])
+                        st.caption(f"Net R:R ~{decision.net_rr:.2f}:1 · Qty จำลอง {decision.qty:g}")
+                    st.caption(f"หมดอายุ {decision.expires_at.astimezone(BKK):%H:%M:%S} น. · "
                                "ตรวจ Bid/Ask ใหม่ก่อนตัดสินใจ; ไม่ส่งคำสั่งซื้อขาย")
                 elif decision.state == "WAIT_PRICE":
                     st.caption("⚪ ยังไม่ถึงโซน · ระบบจะประเมินใหม่เมื่อข้อมูลรีเฟรช")
@@ -429,11 +484,19 @@ def scalp_screen() -> None:
                    "Depth, Net R:R และอายุสัญญาณ ไม่ใช่นับจำนวนเครื่องหมายถูก")
     if ob.entry is not None:
         st.markdown("### แผนจำลอง (ไม่ใช่ออร์เดอร์)")
-        _price_grid([("Entry Bid/Ask", ob.entry), ("Stop Loss", ob.stop),
-                     ("TP1", ob.tp1), ("TP2", ob.tp2)])
+        if fixed_tp and ob.state == "READY" and ob.side in ("LONG", "SHORT"):
+            _price_grid([("Entry Bid/Ask", ob.entry), ("Stop Loss เดิม", ob.stop)])
+            _fixed_tp_panel(fixed_tp_preview(
+                snap, cfg, ob.side, entry=ob.entry, stop=ob.stop,
+                qty=ob.qty, signal_ready=True), approved_signal=True)
+            with st.expander("TP1/TP2 ของแผนเดิม (ยังคงอยู่)"):
+                _price_grid([("TP1 เดิม", ob.tp1), ("TP2 เดิม", ob.tp2)])
+        else:
+            _price_grid([("Entry Bid/Ask", ob.entry), ("Stop Loss", ob.stop),
+                         ("TP1", ob.tp1), ("TP2", ob.tp2)])
         st.caption(f"Position ~{ob.notional_usdt:.2f} USDT / Qty {ob.qty:g} · "
                    f"ความเสี่ยงสุทธิจำลอง {ob.risk_usdt:.3f} USDT · "
-                   f"Net TP2 R:R ~{ob.net_rr:.2f}:1")
+                   f"Net TP2 R:R ของแผนเดิม ~{ob.net_rr:.2f}:1")
         if ob.expires_at:
             st.warning(f"READY หมดอายุ {ob.expires_at.astimezone(BKK):%H:%M:%S} น. "
                        "· ก่อนซื้อให้ตรวจราคาจริงและ Spread ใหม่")
