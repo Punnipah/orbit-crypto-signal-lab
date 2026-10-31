@@ -17,7 +17,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scalp_alerts import empty_state, send_pending, serialise_state, transition, validate_state
-from scalp_engine import ScalpObservation, evaluate_scalp, read_scalp_settings
+from scalp_engine import ScalpObservation, _short_term_direction, evaluate_scalp, read_scalp_settings
 from scalp_marketdata import (Instrument, MarketDataError, MarketSnapshot, fetch_snapshot,
                               get_exchange_catalog, parse_closed_klines, parse_depth, parse_quote)
 from scalp_runner import scan
@@ -150,6 +150,27 @@ class ScalpMarketTests(unittest.TestCase):
 
 
 class ScalpEngineTests(unittest.TestCase):
+    def test_microtrend_can_classify_neutral_15m_with_5m_momentum(self):
+        snap = snapshot()
+        frames = {k: v.copy() for k, v in snap.frames.items()}
+        fifteen = frames["15m"]
+        fifteen["close"] = 104.0  # 15m EMA is flat: original trend gate is neutral.
+        direction = _short_term_direction(fifteen, frames["5m"])
+        self.assertEqual(direction, "LONG")
+        ob = evaluate_scalp(replace(snap, frames=frames), SETTINGS)
+        self.assertEqual(ob.strategy, "MICRO_TREND", ob.reason)
+        self.assertIn(ob.state, ("READY", "WATCH", "RISK_BLOCK", "WAIT"))
+
+    def test_microtrend_does_not_override_clear_opposing_15m(self):
+        snap = snapshot()
+        frames = {k: v.copy() for k, v in snap.frames.items()}
+        fifteen = frames["15m"]
+        fifteen["close"] = [110.0 - i * .04 for i in range(len(fifteen))]
+        self.assertEqual(_short_term_direction(fifteen, frames["5m"]), "")
+        ob = evaluate_scalp(replace(snap, frames=frames), SETTINGS)
+        self.assertNotEqual(ob.strategy, "MICRO_TREND")
+        self.assertNotEqual(ob.state, "READY")
+
     def test_no_5m_breakout_is_wait(self):
         ob = evaluate_scalp(snapshot(breakout=False), SETTINGS)
         self.assertEqual(ob.state, "WAIT")

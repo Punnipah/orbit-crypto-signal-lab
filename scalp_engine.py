@@ -208,6 +208,33 @@ def _adx(frame: pd.DataFrame, period: int = 14) -> float:
     return float(dx.ewm(alpha=1 / period, adjust=False).mean().iloc[-1])
 
 
+def _short_term_direction(fifteen: pd.DataFrame, five: pd.DataFrame) -> str:
+    """5m continuation when 15m is neutral, never override an opposing 15m trend.
+
+    This selects a *direction*, not an entry: the normal closed 5m breakout,
+    closed 1m confirmation and all execution/risk gates still apply.
+    """
+    slow9, slow21 = _ema(fifteen.close, 9), _ema(fifteen.close, 21)
+    if slow9.iloc[-1] > slow21.iloc[-1] and slow21.iloc[-1] > slow21.iloc[-4]:
+        return ""  # Established 15m uptrend should use the original route.
+    if slow9.iloc[-1] < slow21.iloc[-1] and slow21.iloc[-1] < slow21.iloc[-4]:
+        return ""  # Do not turn a 5m bounce against 15m downtrend into BUY.
+    fast9, fast21 = _ema(five.close, 9), _ema(five.close, 21)
+    adx = _adx(five)
+    if not math.isfinite(adx) or adx < 18:
+        return ""
+    close = float(five.close.iloc[-1])
+    if (close > fast9.iloc[-1] > fast21.iloc[-1] and
+            fast21.iloc[-1] > fast21.iloc[-4] and
+            close / float(fast21.iloc[-1]) - 1 <= .015):
+        return "LONG"
+    if (close < fast9.iloc[-1] < fast21.iloc[-1] and
+            fast21.iloc[-1] < fast21.iloc[-4] and
+            1 - close / float(fast21.iloc[-1]) <= .015):
+        return "SHORT"
+    return ""
+
+
 def _early_spot_reversal_note(snapshot: MarketSnapshot) -> str:
     """Advisory only: identify a possible bottoming attempt before a breakout.
 
@@ -256,6 +283,11 @@ def scalp_evidence(snapshot: MarketSnapshot, settings: ScalpSettings,
     direction = observation.side if observation is not None else "NONE"
     trend_aligned = (up if direction == "LONG" else down if direction == "SHORT"
                      else up or down)
+    is_microtrend = observation is not None and observation.strategy == "MICRO_TREND"
+    if is_microtrend:
+        micro_side = _short_term_direction(fifteen, five)
+        trend_aligned = micro_side == direction
+        trend = "15m ยังเป็นกลาง · 5m Momentum " + ("ขึ้น" if micro_side == "LONG" else "ลง" if micro_side == "SHORT" else "ไม่ผ่าน")
     atr_pct = _atr(five) / float(one.close.iloc[-1]) * 100
     volume_base = float(one.volume.iloc[-21:-1].mean())
     row = one.iloc[-1]
@@ -272,7 +304,7 @@ def scalp_evidence(snapshot: MarketSnapshot, settings: ScalpSettings,
     if 0 < tick_bps <= 25.0:
         adaptive = max(adaptive, min(25.0, tick_bps * 1.05))
     return [
-        ("15m แนวโน้ม", trend_aligned,
+        ("5m Momentum (15m neutral)" if is_microtrend else "15m แนวโน้ม", trend_aligned,
          trend + (" · สวนทางกับแผน" if not trend_aligned and direction in ("LONG", "SHORT") else "")),
         ("5m ความผันผวน", .10 <= atr_pct <= 3.0,
          f"ATR {atr_pct:.2f}% (เกณฑ์ Trend 0.10–3.00%; Range ตรวจแยก)"),
@@ -404,8 +436,11 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
         raise ValueError("Time zone not set")
     base = (snapshot.venue, snapshot.symbol)
     early_reversal_note = ""
+    microtrend = False
 
     def status(name: str, reason: str, **kwargs) -> ScalpObservation:
+        kwargs.setdefault("strategy", "MICRO_TREND" if microtrend else "TREND_BREAKOUT")
+        kwargs.setdefault("market_regime", "SHORT_TERM_MOMENTUM" if microtrend else "UNCONFIRMED")
         return ScalpObservation(*base, name, reason, now, spread_bps=snapshot.spread_bps,
                                 early_reversal_note=early_reversal_note, **kwargs)
 
@@ -455,7 +490,10 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     elif trend_down:
         side = "SHORT"
     else:
-        return status("WAIT", "15m EMA9/21 ยังไม่ยืนยันทิศทาง")
+        side = _short_term_direction(fifteen, five)
+        if not side:
+            return status("WAIT", "15m ยังไม่ยืนยันทิศทาง และ 5m ไม่มี Momentum ที่ผ่านเกณฑ์")
+        microtrend = True
     if snapshot.venue == "BINANCE_TH_SPOT" and side == "SHORT":
         return status("EXIT_WATCH", "Spot แนวโน้มลง: เฝ้าพิจารณาขายเหรียญที่ถือ; ห้ามเปิด Short", side="SELL")
     if (side == "LONG" and float(five.close.iloc[-1]) < float(_ema(five.close, 21).iloc[-1])) or (
@@ -463,7 +501,9 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
         return status("WAIT", "5m ไม่สอดคล้องกับ 15m", side=side)
     setup = _setup_5m(five, side, settings, now)
     if setup is None:
-        return status("WAIT", "รอ 5m Breakout จากกรอบเดิมที่ปิดแท่งและ Volume ผ่าน", side=side)
+        return status("WAIT", "5m มีแนวโน้มระยะสั้น แต่ยังรอ Breakout ที่ปิดแท่งและ Volume ผ่าน"
+                      if microtrend else "รอ 5m Breakout จากกรอบเดิมที่ปิดแท่งและ Volume ผ่าน", side=side,
+                      strategy="MICRO_TREND" if microtrend else "TREND_BREAKOUT")
     opened_ms, breakout_close, breakout_extreme = setup
     setup_expires = datetime.fromtimestamp((opened_ms + 300_000) / 1000, timezone.utc) + timedelta(
         minutes=settings.setup_expiry_minutes)
@@ -539,7 +579,7 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     source_note = ("Public Fills Buy/Sell (ไม่ใช่ Taker ที่รับรอง)"
                    if snapshot.venue == "BITGET_USDT_FUTURES" else "Taker Flow")
     return status("READY" if confirmation else "WATCH",
-                  f"ผ่าน 15m/5m และแท่ง 1m {source_note} ยืนยัน; ตรวจราคาอีกครั้ง" if confirmation
+                  f"ผ่าน {'5m Momentum (15m neutral)' if microtrend else '15m/5m'} และแท่ง 1m {source_note} ยืนยัน; ตรวจราคาอีกครั้ง" if confirmation
                   else f"พบกรอบ 5m; รอ 1m Volume + {source_note} ยืนยัน (ยังไม่ใช่จุดซื้อ)",
                   side=side, setup_id=setup_id, entry=entry, stop=stop, tp1=tp1, tp2=tp2,
                   qty=float(qty_dec), notional_usdt=notional,
