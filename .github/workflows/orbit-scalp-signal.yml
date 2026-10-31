@@ -1,0 +1,63 @@
+name: Orbit Scalp Signal v5.6 (Spot TH / Futures Global)
+
+on:
+  schedule:
+    # GitHub's shortest schedule is 5min (best effort, may be delayed).
+    # Offset 2min after 5m closed candles; 1m trigger must still be fresh.
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "First select probe/dry_run; test Telegram only when needed"
+        required: true
+        type: choice
+        options:
+          - probe
+          - dry_run
+          - test_telegram
+          - live_alerts
+        default: probe
+
+permissions:
+  contents: write # New orbit-scalp-state branch ONLY; no default-branch writes.
+
+concurrency:
+  group: orbit-scalp-signal-v56
+  cancel-in-progress: false
+
+jobs:
+  scalp-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout Orbit code
+        uses: actions/checkout@v4
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: monitor_requirements.txt
+      - name: Install monitor dependencies
+        run: python -m pip install -r monitor_requirements.txt
+      - name: Validate read-only scalp config
+        run: python -m scalp_runner --validate-config
+      - name: Check real Binance TH and Futures public APIs
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'probe' }}
+        run: python -m scalp_runner --probe
+      - name: Dry-run signal engine (no Telegram)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dry_run' }}
+        run: python -m scalp_runner --dry-run
+      - name: Send a safe Telegram test
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'test_telegram' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m scalp_runner --test-telegram
+      - name: Scan + Telegram alert transitions (Spot and available Futures)
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'live_alerts' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m scalp_runner
