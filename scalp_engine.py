@@ -243,6 +243,47 @@ def _early_spot_reversal_note(snapshot: MarketSnapshot) -> str:
             f"{share:.0%} · 15m ยังเป็นขาลง; รอการยืนยันและตรวจต้นทุนก่อนเข้า")
 
 
+def scalp_evidence(snapshot: MarketSnapshot, settings: ScalpSettings,
+                   observation: ScalpObservation | None = None) -> list[tuple[str, bool, str]]:
+    """Explain observable signal prerequisites; not a calibrated win probability."""
+    fifteen, five, one = (snapshot.frames[k] for k in ("15m", "5m", "1m"))
+    ema9, ema21 = _ema(fifteen.close, 9), _ema(fifteen.close, 21)
+    up = bool(fifteen.close.iloc[-1] > ema21.iloc[-1] and
+              ema9.iloc[-1] > ema21.iloc[-1] and ema21.iloc[-1] > ema21.iloc[-4])
+    down = bool(fifteen.close.iloc[-1] < ema21.iloc[-1] and
+                ema9.iloc[-1] < ema21.iloc[-1] and ema21.iloc[-1] < ema21.iloc[-4])
+    trend = "ขาขึ้น" if up else "ขาลง" if down else "ยังไม่ยืนยัน"
+    direction = observation.side if observation is not None else "NONE"
+    trend_aligned = (up if direction == "LONG" else down if direction == "SHORT"
+                     else up or down)
+    atr_pct = _atr(five) / float(one.close.iloc[-1]) * 100
+    volume_base = float(one.volume.iloc[-21:-1].mean())
+    row = one.iloc[-1]
+    vol_ratio = float(row.volume / volume_base) if volume_base > 0 else 0.0
+    buy_share = float(row.taker_buy / row.volume) if row.volume > 0 else math.nan
+    flow_long = row.close > row.open and buy_share >= settings.min_taker_buy_share_long
+    flow_short = row.close < row.open and buy_share <= settings.max_taker_buy_share_short
+    flow_aligned = (flow_long if direction == "LONG" else flow_short if direction == "SHORT"
+                    else flow_long or flow_short)
+    flow_ok = bool(math.isfinite(buy_share) and row.volume > 0 and
+                   vol_ratio >= settings.volume_multiplier and flow_aligned)
+    tick_bps = float(snapshot.instrument.tick_price) / float(one.close.iloc[-1]) * 10_000
+    adaptive = max(settings.max_spread_bps, min(25.0, atr_pct * 25.0))
+    if 0 < tick_bps <= 25.0:
+        adaptive = max(adaptive, min(25.0, tick_bps * 1.05))
+    return [
+        ("15m แนวโน้ม", trend_aligned,
+         trend + (" · สวนทางกับแผน" if not trend_aligned and direction in ("LONG", "SHORT") else "")),
+        ("5m ความผันผวน", .10 <= atr_pct <= 3.0,
+         f"ATR {atr_pct:.2f}% (เกณฑ์ Trend 0.10–3.00%; Range ตรวจแยก)"),
+        ("1m Volume/Flow", flow_ok,
+         f"Volume {vol_ratio:.2f}x · Taker Buy {buy_share:.0%}" if math.isfinite(buy_share)
+         else "ไม่มีข้อมูล Taker Buy ที่ยืนยันได้"),
+        ("Spread", snapshot.spread_bps <= adaptive,
+         f"จริง {snapshot.spread_bps:.1f} bps · เพดาน {adaptive:.1f} bps"),
+    ]
+
+
 def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: datetime,
                      atr: float, atr_pct: float, full_spread_limit: float) -> ScalpObservation | None:
     """Independent bounded range-reversal setup, never a blind limit-order suggestion.
@@ -383,6 +424,14 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     # This is a liquidity constraint, not an endorsement of profitable fills.
     adaptive_spread_bps = max(settings.max_spread_bps,
                               min(25.0, atr_pct * 100 * 0.25))
+    # For low-priced pairs such as PEPE, a single valid exchange tick may
+    # exceed a percentage-only spread cap. Permit at most ONE tick (plus 5%
+    # rounding cushion), never more than the absolute 25-bps ceiling. Actual
+    # spread is still fully charged in net R:R; risk gates remain unchanged.
+    minimum_tick_bps = float(snapshot.instrument.tick_price) / current * 10_000
+    if 0 < minimum_tick_bps <= 25:
+        adaptive_spread_bps = max(adaptive_spread_bps,
+                                  min(25.0, minimum_tick_bps * 1.05))
     # Range strategies are independent of trend-breakout requirements; retain
     # their own cost, depth, stop, volume and time-limited evidence gates.
     range_result = _range_candidate(snapshot, settings, now, atr, atr_pct,

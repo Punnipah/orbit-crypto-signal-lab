@@ -1,18 +1,75 @@
 """No exchange mixing, no synthetic taker flow, no fallback READY."""
 
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
+from io import StringIO
 from unittest import mock
 
 import numpy as np
 import pandas as pd
 
 from futures_backup import fetch_backup_klines, fetch_backup_ticker
+from futures_kraken_backup import fetch_kraken_pair, fetch_kraken_klines, fetch_kraken_ticker
 from futures_daytrade import FuturesDataError, FuturesSettings, evaluate_futures
-from futures_daytrade_runner import empty_state, transition
+from futures_daytrade_runner import empty_state, scan, transition, telegram_message
 
 
 class BybitSafetyTests(unittest.TestCase):
+    def test_kraken_contract_mapping_uses_usd_and_btc_xbt_symbol(self):
+        row = {"symbol": "PF_XBTUSD", "tag": "perpetual"}
+        with mock.patch("futures_kraken_backup._read", return_value={"tickers": [row]}):
+            self.assertEqual(fetch_kraken_pair("BTCUSDT"), "PF_XBTUSD")
+
+    def test_kraken_candles_drop_open_bar_and_keep_missing_taker_flow(self):
+        now = datetime(2026, 10, 30, 11, 40, tzinfo=timezone.utc)
+        start = int(now.timestamp() * 1000) - 125 * 900_000
+        candles = [{"time": start + i * 900_000, "open": "1", "high": "1.1",
+                    "low": "0.9", "close": "1", "volume": "10"} for i in range(126)]
+        with mock.patch("futures_kraken_backup._read", return_value={"candles": candles}):
+            frame = fetch_kraken_klines("PF_PEPEUSD", "15m", now=now)
+        self.assertGreaterEqual(len(frame), 100)
+        self.assertTrue(frame["taker_buy"].isna().all())
+        self.assertLessEqual(int(frame["closed"].iloc[-1]), int(now.timestamp() * 1000))
+
+    def test_kraken_ticker_rejects_stale_and_marks_usd_watch_only(self):
+        now = datetime(2026, 10, 30, 11, 40, tzinfo=timezone.utc)
+        row = {"symbol": "PF_PEPEUSD", "tag": "perpetual", "last": 0.01,
+               "markPrice": 0.01, "fundingRate": 999.0, "relativeFundingRate": 0.0001,
+               "lastTime": "2026-10-30T11:30:00Z"}
+        with mock.patch("futures_kraken_backup._read", return_value={"tickers": [row]}):
+            with self.assertRaises(FuturesDataError):
+                fetch_kraken_ticker("PF_PEPEUSD", now=now)
+            row["lastTime"] = "2026-10-30T11:39:00Z"
+            self.assertEqual(fetch_kraken_ticker("PF_PEPEUSD", now=now), (.01, .01, .01))
+        from futures_daytrade import FuturesObservation
+        ob = FuturesObservation("PF_PEPEUSD", "WATCH_LONG", "research", now,
+                                direction="LONG", source="KRAKEN_WATCH_ONLY",
+                                setup_id="LONG:abc", last_price=0.01, entry_low=0.009,
+                                entry_high=0.011, stop=0.008, tp1=0.012, tp2=0.013,
+                                risk_usdt=5, notional_usdt=100, net_rr_tp2=2)
+        self.assertIn("KRAKEN USD", telegram_message(ob))
+        state = empty_state()
+        transition(state, [ob])
+        self.assertIn("KRAKEN:PF_PEPEUSD", state["signals"])
+
+    def test_scan_exposes_both_venue_failures_without_crashing(self):
+        now = datetime(2026, 10, 30, 11, 40, tzinfo=timezone.utc)
+        output = StringIO()
+        with mock.patch("futures_daytrade_runner.fetch_futures_catalog",
+                        side_effect=FuturesDataError("Binance HTTP 451")), \
+             mock.patch("futures_daytrade_runner.fetch_backup_pair",
+                        side_effect=FuturesDataError("Bybit HTTP 403")), \
+             mock.patch("futures_daytrade_runner.fetch_kraken_pair",
+                        side_effect=FuturesDataError("Kraken HTTP 503")), \
+             redirect_stdout(output):
+            results = scan(FuturesSettings(("PEPEUSDT", "BTCUSDT")), now=now)
+        self.assertEqual([ob.state for ob in results], ["DATA_UNAVAILABLE"] * 2)
+        self.assertIn("Binance HTTP 451", output.getvalue())
+        self.assertIn("Bybit HTTP 403", output.getvalue())
+        self.assertIn("PEPEUSDT | Bybit unavailable", output.getvalue())
+        self.assertIn("Kraken HTTP 503", output.getvalue())
+
     def test_bybit_klines_keep_taker_evidence_missing_and_drop_open_bar(self):
         now = datetime(2026, 10, 30, 11, 40, tzinfo=timezone.utc)
         start = int(now.timestamp() * 1000) - 125 * 900_000

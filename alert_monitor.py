@@ -34,21 +34,40 @@ def _log(message: str) -> None:
 
 def _load_inputs():
     settings = read_settings(ROOT / "monitor_config.json")
-    watches = parse_watch_links(os.environ.get("ORBIT_WATCH_LINKS", ""), settings.symbols)
+    # Saved plans are optional. A malformed/obsolete saved URL must not stop
+    # the 24/7 LIVE scanner for every symbol.
+    try:
+        watches = parse_watch_links(os.environ.get("ORBIT_WATCH_LINKS", ""), settings.symbols)
+    except ValueError:
+        _log("Optional ORBIT_WATCH_LINKS is invalid; frozen watch skipped, LIVE scan stays active")
+        watches = {}
     coinglass = read_manual_coinglass(ROOT / "monitor_coinglass_manual.json")
     return settings, watches, coinglass
 
 
+def _unavailable_streams(symbol, now, error, watch):
+    """Report live scan failures even when an optional frozen URL exists."""
+    results = [unavailable(symbol, now, error)]
+    if watch is not None:
+        results.append(unavailable(symbol, now, error,
+                                   watch_token=watch[0], watch_url=watch[1]))
+    return results
+
+
 def scan_all(settings, watches, coinglass, *, now: datetime) -> list:
-    """A failure in one coin must not suppress other coins or fabricate READY."""
+    """Always scan LIVE MTF; optionally scan the saved plan from the SAME data.
+
+    A frozen PEPE URL must not hide a new PEPE Spot BUY opportunity.
+    Failures in one symbol never fabricate READY or suppress other symbols.
+    """
     try:
         active = {item["symbol"] for item in fetch_catalog()
                   if item["quote"] == "USDT"}
     except (Exception,) as exc:
         _log(f"Spot catalog unavailable: {type(exc).__name__}")
-        return [unavailable(symbol, now, "รายการคู่ Spot USDT ไม่พร้อม",
-                            watch_token=watches[symbol][0] if symbol in watches else None)
-                for symbol in settings.symbols]
+        return [ob for symbol in settings.symbols
+                for ob in _unavailable_streams(symbol, now, "รายการคู่ Spot USDT ไม่พร้อม",
+                                               watches.get(symbol))]
 
     try:
         btc_bars = (fetch_klines("BTCUSDT", "4h", settings.history_candles),
@@ -61,30 +80,34 @@ def scan_all(settings, watches, coinglass, *, now: datetime) -> list:
     for symbol in settings.symbols:
         watch = watches.get(symbol)
         if symbol not in active:
-            observations.append(unavailable(symbol, now, "คู่ Spot/USDT นี้ไม่ได้อยู่ใน Catalog ที่ซื้อขายได้",
-                                            watch_token=watch[0] if watch else None))
+            observations.extend(_unavailable_streams(
+                symbol, now, "คู่ Spot/USDT นี้ไม่ได้อยู่ใน Catalog ที่ซื้อขายได้", watch))
             continue
         try:
-            observation = analyze_symbol(symbol, settings, now=now, watch=watch,
-                                         manual_cg=coinglass.get(symbol[:-4]),
-                                         btc_bars=btc_bars)
+            analyzed = analyze_symbol(symbol, settings, now=now, watch=watch,
+                                      manual_cg=coinglass.get(symbol[:-4]),
+                                      btc_bars=btc_bars,
+                                      return_live_also=watch is not None)
+            results = analyzed if isinstance(analyzed, tuple) else (analyzed,)
         except Exception as exc:
             # Fail closed: app/market input bugs must never turn into READY.
             _log(f"{symbol} analyze failed: {type(exc).__name__}")
-            observation = unavailable(symbol, now, f"ข้อมูลสำคัญหรือการคำนวณไม่พร้อม ({type(exc).__name__})",
-                                      watch_token=watch[0] if watch else None)
-        observations.append(observation)
-        _log(f"{symbol} | mode={observation.mode} | status={observation.status} "
-             f"| rally={observation.opportunity_status} "
-             f"| futures={'OK' if observation.futures_source != 'MISSING' else 'MISSING'} "
-             f"| CoinGlass={observation.coinglass_status}")
+            results = _unavailable_streams(
+                symbol, now, f"ข้อมูลสำคัญหรือการคำนวณไม่พร้อม ({type(exc).__name__})", watch)
+        observations.extend(results)
+        for observation in results:
+            _log(f"{symbol} | mode={observation.mode} | status={observation.status} "
+                 f"| rally={observation.opportunity_status} "
+                 f"| futures={'OK' if observation.futures_source != 'MISSING' else 'MISSING'} "
+                 f"| CoinGlass={observation.coinglass_status}")
     return observations
 
 
 def run_monitor(*, dry_run: bool = False) -> int:
     settings, watches, coinglass = _load_inputs()
-    _log(f"Orbit v4.2 scanning {', '.join(settings.symbols)} | "
-         f"Frozen links {len(watches)}/{len(settings.symbols)} | CoinGlass manual {len(coinglass)}")
+    _log(f"Orbit auto LIVE MTF scanning {', '.join(settings.symbols)} every scheduled run | "
+         f"Optional frozen links {len(watches)}/{len(settings.symbols)} | "
+         f"CoinGlass manual {len(coinglass)}")
     if not dry_run:
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")

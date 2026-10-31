@@ -231,12 +231,16 @@ def _scalp_live(venue: str, symbol: str, refresh_id: int):
     return evaluate_scalp(snap, settings), snap, settings
 
 
+@st.fragment(run_every="60s")
 def scalp_screen() -> None:
-    """Mobile review of v5.8 AUTO REGIME Spot/Futures signals and health."""
+    """On-page live read-only scan; stops when the Streamlit session closes."""
     from scalp_marketdata import MarketDataError
+    from scalp_engine import scalp_evidence
 
-    st.markdown("## ⏱️ Scalp Signal v5.8 · AUTO REGIME")
-    st.caption("Trend Breakout หรือ Sideways Range Reversal → แท่ง 1m ปิดยืนยัน · PAPER ONLY · ไม่มีการส่งออร์เดอร์")
+    st.markdown("## 🎯 Scalp Signal v5.8 · LIVE SIGNAL")
+    st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
+               "Trend Breakout / Sideways / Early Reversal Watch · "
+               "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
     market = st.radio("เลือกตลาด", ["Spot · Binance TH", "Futures · Binance Global",
                                    "Futures · Bitget (ตลาดแยก)"],
                       horizontal=True, key="scalp_market")
@@ -279,6 +283,11 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    with st.expander("🔎 ตรวจหลักฐานของสัญญาณ (ไม่ใช่เปอร์เซ็นต์ชนะ)"):
+        for name, passed, explanation in scalp_evidence(snap, cfg, ob):
+            st.markdown(f"{'✅' if passed else '🟡'} **{name}** — {explanation}")
+        st.caption("สัญญาณ READY ต้องผ่านกฎเพิ่มเติม เช่น โครงสร้างราคา Stop/TP, "
+                   "Depth, Net R:R และอายุสัญญาณ ไม่ใช่นับจำนวนเครื่องหมายถูก")
     if ob.entry is not None:
         st.markdown("### แผนจำลอง (ไม่ใช่ออร์เดอร์)")
         _price_grid([("Entry Bid/Ask", ob.entry), ("Stop Loss", ob.stop),
@@ -292,9 +301,8 @@ def scalp_screen() -> None:
     st.info(f"ทุนตั้งต้นจำลอง {cfg.capital_usdt:.0f} USDT · เสี่ยงต่อครั้ง "
             f"{cfg.risk_per_trade_pct:.2f}% · เพดานความเสี่ยงของการแจ้งเตือน "
             f"{cfg.daily_risk_budget_pct:.1f}%/วัน (ไม่ใช่ระบบติดตามออร์เดอร์จริง)")
-    st.caption("Telegram Scalp ทำงานจาก GitHub Actions ทุก ~5 นาทีเมื่อ Scheduler ทำงาน "
-               "· ปิดเว็บได้ · สัญญาณ 1 นาทีอาจพลาดเพราะรอบสแกน · "
-               "ต้องเปิดใช้งาน Workflow orbit-scalp-signal.yml ก่อน")
+    st.caption("อัปเดตอัตโนมัติเฉพาะขณะเปิดหน้า Scalp ใน Streamlit เท่านั้น · "
+               "เมื่อปิดเว็บจะไม่มีการสแกนเบื้องหลัง · ไม่มีการรับประกันกำไร")
     if venue == "BITGET_USDT_FUTURES":
         st.warning("Bitget เป็นตลาด Futures คนละแห่งกับ Binance Global · "
                    "READY ต้องมี Public Trade Fills Buy/Sell (ไม่ใช่ Taker ที่รับรอง) "

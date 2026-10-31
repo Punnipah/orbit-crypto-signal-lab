@@ -47,6 +47,13 @@ def _fingerprint(plan_token: str | None) -> str:
     return sha256((plan_token or "LIVE_MTF").encode("utf-8")).hexdigest()[:20]
 
 
+def _stream_key(observation: Observation) -> str:
+    # Keep the old FROZEN state key for an in-place upgrade of GitHub state.
+    # LIVE has its own key so saved plans cannot suppress or dedupe new BUYs.
+    return (observation.symbol if observation.mode == "FROZEN"
+            else f"{observation.symbol}|LIVE_MTF")
+
+
 def _event_id(symbol: str, fp: str, kind: str, marker: str = "") -> str:
     return sha256(f"{symbol}/{fp}/{kind}/{marker}".encode()).hexdigest()[:24]
 
@@ -58,7 +65,7 @@ def _fmt(value: float | None) -> str:
 def build_message(observation: Observation, kind: str) -> str:
     titles = {
         "READY_NOW": "🟢 Frozen Entry Trigger ผ่าน (ตรวจเองก่อนซื้อ)",
-        "MTF_READY": "🟡 MTF สด READY (ยังไม่ได้ล็อกโซน)",
+        "MTF_READY": "🟢 MTF สด BUY READY (ไม่ต้อง Save แผน)",
         "INVALIDATED": "🔴 แผนที่ล็อกถูกยกเลิก",
         "PASSED": "⚪ จังหวะแผนเดิมผ่านไปแล้ว",
         "EXPIRED": "⚪ แผนล็อกหมดอายุ",
@@ -108,7 +115,7 @@ def build_message(observation: Observation, kind: str) -> str:
         if kind in IMPORTANT_RALLIES:
             parts.append("🔒 แผนล็อกเดิมไม่เปลี่ยน · ไม่มีคำสั่งซื้อ · หากต้องการแผนใหม่ต้องล็อกเองและอัปเดต ORBIT_WATCH_LINKS")
     else:
-        parts.append("ยังไม่มี Frozen Watch ของคู่นี้; สัญญาณ MTF สดอาจเปลี่ยนทุกครั้ง")
+        parts.append("สแกนสดอัตโนมัติ ไม่ต้องล็อกโซน; ยังไม่ได้ล็อกโซนใหม่และสัญญาณอาจเปลี่ยนตามแท่ง")
     parts.append("⚠️ เป็นสัญญาณทดลอง ไม่รับประกันผล และไม่มีการส่งออเดอร์")
     return "\n".join(parts)[:3800]
 
@@ -116,23 +123,48 @@ def build_message(observation: Observation, kind: str) -> str:
 def transition(state: dict, observations: list[Observation]) -> dict:
     """Mutates a validated state with important changes only; no WAIT spam."""
     validate_state(state)
+    # Migration: prior releases stored LIVE BTC/DOGE under just the symbol.
+    # Move their dedupe record and outbox *before* we process a dual-mode PEPE.
+    # The existing frozen records stay keyed by symbol, preserving old alerts.
+    for ob in observations:
+        if ob.mode != "LIVE_MTF":
+            continue
+        live_key = _stream_key(ob)
+        legacy = state["symbols"].get(ob.symbol)
+        if legacy is not None and legacy.get("plan_fingerprint") == _fingerprint(None):
+            state["symbols"].setdefault(live_key, legacy)
+            del state["symbols"][ob.symbol]
+            for row in state["pending"]:
+                if row["symbol"] == ob.symbol:
+                    row["symbol"] = live_key
+    active_frozen = {ob.symbol for ob in observations if ob.mode == "FROZEN"}
+    for ob in observations:
+        if ob.mode == "LIVE_MTF" and ob.symbol not in active_frozen:
+            # If a saved link was removed, never deliver queued alerts from
+            # that old plan on a later LIVE-only run.
+            legacy = state["symbols"].get(ob.symbol)
+            if legacy is not None and legacy.get("plan_fingerprint") != _fingerprint(None):
+                state["symbols"].pop(ob.symbol)
+                state["pending"] = [row for row in state["pending"]
+                                    if row["symbol"] != ob.symbol]
     ids = {notice["id"] for notice in state["pending"]}
     for ob in observations:
+        state_key = _stream_key(ob)
         fp = _fingerprint(ob.watch_token)
-        old = state["symbols"].get(ob.symbol, {})
+        old = state["symbols"].get(state_key, {})
         if old.get("plan_fingerprint") != fp:
             # Never deliver a pending alert for an older frozen plan/link.
-            state["pending"] = [row for row in state["pending"] if row["symbol"] != ob.symbol]
+            state["pending"] = [row for row in state["pending"] if row["symbol"] != state_key]
             old = {}
         if ob.status not in READY:
             # A delayed Telegram outage must never turn an old READY into a
             # fresh-looking buy notification after the signal disappeared.
             state["pending"] = [row for row in state["pending"] if not (
-                row["symbol"] == ob.symbol and row["kind"] in READY)]
+                row["symbol"] == state_key and row["kind"] in READY)]
         # An old rally message must not be delivered after the price has
         # reverted, the frozen plan expires, or the available evidence changes.
         state["pending"] = [row for row in state["pending"] if not (
-            row["symbol"] == ob.symbol and row["kind"] in IMPORTANT_RALLIES
+            row["symbol"] == state_key and row["kind"] in IMPORTANT_RALLIES
             and row["kind"] != ob.opportunity_status)]
         ids = {notice["id"] for notice in state["pending"]}
         prev_status = old.get("status")
@@ -177,10 +209,10 @@ def transition(state: dict, observations: list[Observation]) -> dict:
             if len(state["pending"]) >= MAX_QUEUE:
                 raise RuntimeError("Telegram pending เต็ม: หยุดเพิ่มแจ้งเตือนจนกว่าจะส่งสำเร็จ")
             state["pending"].append({"id": notice_id, "text": build_message(ob, kind),
-                                     "symbol": ob.symbol, "kind": kind})
+                                     "symbol": state_key, "kind": kind})
             ids.add(notice_id)
             seen.append(notice_id)
-        state["symbols"][ob.symbol] = {
+        state["symbols"][state_key] = {
             "plan_fingerprint": fp,
             "status": ob.status,
             "opportunity": ob.opportunity_status if ob.mode == "FROZEN" else "NONE",

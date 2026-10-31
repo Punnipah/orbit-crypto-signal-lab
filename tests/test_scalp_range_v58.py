@@ -13,7 +13,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scalp_engine import ScalpSettings, _adx, evaluate_scalp
+from scalp_engine import ScalpSettings, _adx, evaluate_scalp, scalp_evidence
 from scalp_marketdata import Instrument, MarketSnapshot
 
 
@@ -95,6 +95,24 @@ class RangeTests(unittest.TestCase):
         self.assertIn("EARLY BUY WATCH", ob.early_reversal_note)
         self.assertIn("ยังไม่ใช่สัญญาณซื้อ", ob.early_reversal_note)
         self.assertNotEqual(ob.state, "EARLY_BUY")
+
+    def test_one_tick_spread_for_low_price_pair_is_not_automatically_rejected(self):
+        snap = sideways()
+        scale = 5e-8
+        frames = {tf: frame.copy() for tf, frame in snap.frames.items()}
+        for frame in frames.values():
+            for name in ("open", "high", "low", "close"):
+                frame[name] *= scale
+        bid = 99.24 * scale
+        tick = Decimal("0.00000001")
+        inst = Instrument("PEPEUSDT", Decimal("1"), Decimal("1"), Decimal("1"), tick)
+        snap = replace(snap, symbol="PEPEUSDT", instrument=inst, frames=frames,
+                       bid=bid, ask=bid + float(tick))
+        self.assertGreater(snap.spread_bps, self.settings().max_spread_bps)
+        ob = evaluate_scalp(snap, self.settings())
+        self.assertNotIn("Spread หรือ ATR", ob.reason)
+        self.assertTrue(any(name == "Spread" and passed
+                            for name, passed, _ in scalp_evidence(snap, self.settings())))
 
 
 if __name__ == "__main__":

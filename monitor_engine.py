@@ -190,7 +190,8 @@ def unavailable(symbol: str, now: datetime, error: str, *,
 def analyze_symbol(symbol: str, settings: MonitorSettings, *,
                    now: datetime, watch: tuple[str, str | None] | None,
                    manual_cg: CoinGlassSnapshot | None,
-                   btc_bars: tuple[pd.DataFrame, pd.DataFrame] | None = None) -> Observation:
+                   btc_bars: tuple[pd.DataFrame, pd.DataFrame] | None = None,
+                   return_live_also: bool = False) -> Observation | tuple[Observation, Observation]:
     """Read data once, using the same mandatory veto rules as Orbit's MTF tab.
 
     Network failures in optional cross-exchange evidence are non-fatal; those
@@ -265,32 +266,45 @@ def analyze_symbol(symbol: str, settings: MonitorSettings, *,
     failed = tuple(check.label for check in verdict.checks if check.passed is False)
     cg_status = reports["15m"].coinglass_status if manual_cg is not None else "NOT_ENTERED"
     futures_name = derivatives.source if derivatives is not None else "MISSING"
-    if token is not None:
-        plan = decode_watch(token)
-        result = evaluate_watch(plan, frames["15m"], now=now, current_price=price,
-                                mtf_buy=verdict.signal == "BUY")
-        rally = evaluate_rally(plan, frames["15m"], now=now, current_price=price,
-                               frozen_status=result.status,
-                               context_ready=(derivatives is not None and micro is not None
-                                              and btc is not None and btc.clean
-                                              and verdict.alignment_index is not None
-                                              and all(check.passed for check in extra[:2])),
-                               live_mtf_ready=verdict.status == "READY",
-                               new_entry=verdict.entry, settings=settings.rally_settings())
-        return Observation(symbol, "FROZEN", result.status, now, price,
-                           verdict.alignment_index, futures_name, cg_status, result.reason,
-                           token, url, plan.entry_low, plan.entry_high, plan.stop_loss,
-                           plan.take_profit_1, plan.take_profit_2, result.triggered_at, failed,
-                           rally.status, rally.reason, rally.distance_pct,
-                           rally.volume_ratio, rally.frozen_atr_pct, rally.latest_confirmed_at,
-                           rally.new_entry_low, rally.new_entry_high)
     plan = verdict.entry
-    return Observation(symbol, "LIVE_MTF", "MTF_READY" if verdict.status == "READY" else "MTF_WAIT",
-                       now, price, verdict.alignment_index, futures_name, cg_status,
-                       "; ".join(verdict.reasons[:3]) or "ยังไม่ถึงเกณฑ์รวม",
-                       entry_low=plan.entry_low if plan else None,
-                       entry_high=plan.entry_high if plan else None,
-                       stop_loss=plan.stop_loss if plan else None,
-                       tp1=plan.take_profit_1 if plan else None,
-                       tp2=plan.take_profit_2 if plan else None,
-                       trigger_at=reports["15m"].last_close, failed_checks=failed)
+    live_observation = Observation(
+        symbol, "LIVE_MTF", "MTF_READY" if verdict.status == "READY" else "MTF_WAIT",
+        now, price, verdict.alignment_index, futures_name, cg_status,
+        "; ".join(verdict.reasons[:3]) or "ยังไม่ถึงเกณฑ์รวม",
+        entry_low=plan.entry_low if plan else None,
+        entry_high=plan.entry_high if plan else None,
+        stop_loss=plan.stop_loss if plan else None,
+        tp1=plan.take_profit_1 if plan else None,
+        tp2=plan.take_profit_2 if plan else None,
+        trigger_at=reports["15m"].last_close, failed_checks=failed)
+    if token is not None:
+        try:
+            plan = decode_watch(token)
+            result = evaluate_watch(plan, frames["15m"], now=now, current_price=price,
+                                    mtf_buy=verdict.signal == "BUY")
+            rally = evaluate_rally(plan, frames["15m"], now=now, current_price=price,
+                                   frozen_status=result.status,
+                                   context_ready=(derivatives is not None and micro is not None
+                                                  and btc is not None and btc.clean
+                                                  and verdict.alignment_index is not None
+                                                  and all(check.passed for check in extra[:2])),
+                                   live_mtf_ready=verdict.status == "READY",
+                                   new_entry=verdict.entry, settings=settings.rally_settings())
+        except Exception as exc:
+            # Frozen URL parsing and lifecycle are optional; a bad old plan
+            # must never turn a valid LIVE MTF scan into DATA_UNAVAILABLE.
+            if return_live_also:
+                return (live_observation,
+                        unavailable(symbol, now, f"แผนที่บันทึกไว้ตรวจไม่ได้ ({type(exc).__name__})",
+                                    watch_token=token, watch_url=url))
+            raise
+        frozen_observation = Observation(
+            symbol, "FROZEN", result.status, now, price,
+            verdict.alignment_index, futures_name, cg_status, result.reason,
+            token, url, plan.entry_low, plan.entry_high, plan.stop_loss,
+            plan.take_profit_1, plan.take_profit_2, result.triggered_at, failed,
+            rally.status, rally.reason, rally.distance_pct,
+            rally.volume_ratio, rally.frozen_atr_pct, rally.latest_confirmed_at,
+            rally.new_entry_low, rally.new_entry_high)
+        return (live_observation, frozen_observation) if return_live_also else frozen_observation
+    return live_observation
