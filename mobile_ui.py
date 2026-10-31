@@ -286,8 +286,9 @@ def scalp_screen() -> None:
     """On-page live read-only scan; stops when the Streamlit session closes."""
     from scalp_marketdata import MarketDataError
     from scalp_engine import scalp_evidence, scalp_watch_zones
+    from zone_signal import evaluate_zone
 
-    st.markdown("## 🎯 Scalp Signal v5.8 · LIVE SIGNAL")
+    st.markdown("## 🎯 Scalp Signal v5.8 · LIVE ZONE DECISION")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -343,11 +344,23 @@ def scalp_screen() -> None:
         zones = scalp_watch_zones(snap, watch_side)
         if zones:
             st.markdown(f"**{'BUY / LONG — โซนแนวรับ' if watch_side == 'LONG' else 'SHORT — โซนแนวต้าน'}**")
-            for zone in zones:
-                label = {"IN_ZONE": "🟡 อยู่ในโซน · รอยืนยัน", "WATCH": "⚪ รอราคาเข้าโซน",
-                         "INVALIDATED": "🔴 แนวรับ/ต้านหลุด"}[zone["state"]]
+            evaluated = [(zone, evaluate_zone(snap, cfg, zone, watch_side)) for zone in zones]
+            ready = [(zone, decision) for zone, decision in evaluated if decision.state == "ZONE_READY"]
+            # One primary candidate per direction: overlapping zones must not
+            # look like instructions to open three positions simultaneously.
+            primary_name = (min(ready, key=lambda item: abs(
+                (item[0]["low"] + item[0]["high"]) / 2 -
+                (snap.ask if watch_side == "LONG" else snap.bid)))[0]["name"]
+                if ready else None)
+            for zone, decision in evaluated:
+                label = {"ZONE_READY": "🟢 ZONE READY · ผ่านเงื่อนไขจำลอง",
+                         "WAIT_PRICE": "⚪ WAIT PRICE · รอเข้าโซน",
+                         "WAIT_CONFIRM": "🟡 IN ZONE · รอยืนยัน",
+                         "RISK_BLOCK": "🔴 RISK BLOCK · งดเข้า",
+                         "INVALIDATED": "🔴 โซนหลุด · งดเข้า",
+                         "DATA_UNAVAILABLE": "⚠️ DATA UNAVAILABLE"}[decision.state]
                 css = ("in-zone" if zone["state"] == "IN_ZONE" else
-                       "invalid" if zone["state"] == "INVALIDATED" else "")
+                       "invalid" if decision.state in ("RISK_BLOCK", "INVALIDATED") else "")
                 low, high = concise_price(zone["low"]), concise_price(zone["high"])
                 st.markdown(
                     f'<div class="orb-zone {css}">'
@@ -360,9 +373,31 @@ def scalp_screen() -> None:
                     f'<div class="orb-zone-sub">อ้างอิง: {escape(zone["basis"])}'
                     f' · ห่างจากขอบโซน {zone["distance_pct"]:.2f}%</div></div>',
                     unsafe_allow_html=True)
-    st.caption("เมื่อแตะโซน ต้องรอแท่ง 1m ที่ปิดแล้วยืนยัน Volume/Flow, "
-               "Spread, Stop Loss และ Net R:R ก่อนพิจารณาเข้า · "
-               "ถึงโซนไม่ได้แปลว่า BUY READY; ต้องดูสถานะจากตัวประเมินด้านบน")
+                if decision.state == "ZONE_READY" and zone["name"] != primary_name:
+                    st.info("โซนยืนยันซ้อนกัน · ใช้โซนที่ใกล้ราคามากที่สุดเป็นแผนหลักเพียงหนึ่งโซน")
+                elif decision.state == "ZONE_READY":
+                    st.success(f"{label} · {decision.reason}")
+                    _price_grid([("ENTRY ล่าสุด", decision.entry), ("STOP LOSS", decision.stop),
+                                 ("TP1 จำลอง", decision.tp1), ("TP2 จำลอง", decision.tp2)])
+                    st.caption(f"Net R:R ~{decision.net_rr:.2f}:1 · Qty จำลอง {decision.qty:g} · "
+                               f"หมดอายุ {decision.expires_at.astimezone(BKK):%H:%M:%S} น. · "
+                               "ตรวจ Bid/Ask ใหม่ก่อนตัดสินใจ; ไม่ส่งคำสั่งซื้อขาย")
+                elif decision.state == "WAIT_PRICE":
+                    st.caption("⚪ ยังไม่ถึงโซน · ระบบจะประเมินใหม่เมื่อข้อมูลรีเฟรช")
+                elif decision.state in ("RISK_BLOCK", "INVALIDATED"):
+                    st.error(f"{label} · {decision.reason}")
+                else:
+                    st.warning(f"{label} · {decision.reason}")
+                if zone["state"] == "IN_ZONE":
+                    with st.expander(f"🔎 เหตุผลของ {zone['name']} {watch_side} · 15m / 5m / 1m",
+                                     expanded=False):
+                        for check_name, passed, explanation in decision.checks:
+                            st.markdown(f"{'✅' if passed else '🟡'} **{check_name}** — {explanation}")
+                        st.caption("เงื่อนไขต้นทุน/Depth/Stop/Net R:R ตรวจต่อเมื่อแท่งยืนยันผ่าน · "
+                                   "การผ่านเชิงเทคนิคไม่ใช่อัตราชนะที่รับประกัน")
+    st.caption("แต่ละโซนตรวจสถานะของตัวเองทุกครั้งที่หน้า Scalp รีเฟรช (~60 วินาที) · "
+               "ZONE READY เป็นสัญญาณจำลองแยกจาก Strategy ด้านบน และยังไม่ผ่านการพิสูจน์ผลกำไร · "
+               "ถึงโซนไม่ได้แปลว่าเข้าได้ทันที")
     with st.expander("🔎 ตรวจหลักฐานของสัญญาณ (ไม่ใช่เปอร์เซ็นต์ชนะ)"):
         for name, passed, explanation in scalp_evidence(snap, cfg, ob):
             st.markdown(f"{'✅' if passed else '🟡'} **{name}** — {explanation}")
