@@ -317,10 +317,12 @@ def scalp_evidence(snapshot: MarketSnapshot, settings: ScalpSettings,
 
 
 def scalp_watch_zones(snapshot: MarketSnapshot, side: str = "LONG") -> list[dict]:
-    """Indicative structural watch zones, independent of an executable signal.
+    """Return at most three *still relevant* structural 5m watch zones.
 
-    Zones are alternatives for observing a reaction, NOT staggered buy orders.
-    Use only fully closed 5m candles; never substitute these for READY gates.
+    A historical support above the current ask (or resistance below the bid)
+    is not a pending buy/sell zone.  Never recycle a broken level as an order
+    candidate, and never manufacture a new support using arbitrary ATR offsets.
+    Only closed 5m candles contribute levels.  READY remains a separate gate.
     """
     five = snapshot.frames["5m"]
     if len(five) < 50 or side not in ("LONG", "SHORT"):
@@ -329,29 +331,52 @@ def scalp_watch_zones(snapshot: MarketSnapshot, side: str = "LONG") -> list[dict
     atr = _atr(five)
     if not math.isfinite(atr) or atr <= 0 or price <= 0:
         return []
-    history = five.iloc[-49:-1]
-    if side == "LONG":
-        anchors = [float(_ema(five.close, 21).iloc[-1]),
-                   float(history.low.tail(12).min()), float(history.low.min())]
-    else:
-        anchors = [float(_ema(five.close, 21).iloc[-1]),
-                   float(history.high.tail(12).max()), float(history.high.max())]
-    zones = []
-    for index, anchor in enumerate(anchors, 1):
-        # One-zone width adapts to volatility but does not imply a fill price.
-        lo, hi = max(0.0, anchor - atr * .18), anchor + atr * .18
-        if lo <= 0 or not math.isfinite(hi):
-            return []
-        distance_pct = (price - hi) / price * 100 if side == "LONG" and price > hi else (
-            (lo - price) / price * 100 if side == "SHORT" and price < lo else 0.0)
-        # A crossed support/resistance is invalidated, not a cheaper entry.
-        broken = price < lo - atr * .3 if side == "LONG" else price > hi + atr * .3
-        state = "INVALIDATED" if broken else "IN_ZONE" if lo <= price <= hi else "WATCH"
-        zones.append({"name": f"โซน {index}", "low": lo, "high": hi,
-                      "state": state, "distance_pct": max(0.0, distance_pct),
-                      "basis": ("EMA21 5m" if index == 1 else
-                                "แนวรับ/ต้าน 12 แท่ง 5m" if index == 2 else
-                                "แนวรับ/ต้าน 48 แท่ง 5m")})
+    # Exclude the newest closed candle from the lookback extrema so a fresh
+    # breakdown cannot instantly redefine the broken support as a valid floor.
+    history = five.iloc[-97:-1]
+    price_column = "low" if side == "LONG" else "high"
+    anchors: list[tuple[float, str]] = [
+        (float(_ema(five.close, 21).iloc[-1]), "EMA21 5m")]
+    for lookback in (12, 24, 48, 96):
+        sample = history.tail(lookback)[price_column]
+        if len(sample) >= min(lookback, 12):
+            level = sample.min() if side == "LONG" else sample.max()
+            anchors.append((float(level), f"แนวรับ/ต้าน {len(sample)} แท่ง 5m"))
+
+    # Independent local swing points give a more informative ladder when the
+    # rolling minima/maxima collapse onto the very same historical price.
+    values = history[price_column].astype(float).tolist()
+    for i in range(2, len(values) - 2):
+        current = values[i]
+        neighbors = values[i - 2:i] + values[i + 1:i + 3]
+        if (current < min(neighbors) if side == "LONG" else current > max(neighbors)):
+            anchors.append((current, "จุดกลับตัวท้องถิ่น 5m"))
+
+    # For a long position prefer the nearest support below the quote. For a
+    # short position prefer the nearest resistance above it.
+    anchors.sort(key=lambda item: item[0], reverse=(side == "LONG"))
+    zones: list[dict] = []
+    for anchor, basis in anchors:
+        lo, hi = anchor - atr * .18, anchor + atr * .18
+        if not (math.isfinite(lo) and math.isfinite(hi) and lo > 0):
+            continue
+        # Once the market is already beyond the far side of a level, it is an
+        # invalidated old structure. It must not appear as the next entry.
+        if (side == "LONG" and price < lo) or (side == "SHORT" and price > hi):
+            continue
+        # Adjacent pivot points often describe the same price area. Do not
+        # display three overlapping cards as if they were three distinct buys.
+        if any(lo <= z["high"] + atr * .08 and hi >= z["low"] - atr * .08
+               for z in zones):
+            continue
+        in_zone = lo <= price <= hi
+        gap = 0.0 if in_zone else (price - hi if side == "LONG" else lo - price)
+        zones.append({"name": f"โซน {len(zones) + 1}", "low": lo, "high": hi,
+                      "state": "IN_ZONE" if in_zone else "WATCH",
+                      "distance_pct": max(0.0, gap / price * 100),
+                      "basis": basis})
+        if len(zones) == 3:
+            break
     return zones
 
 

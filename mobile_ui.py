@@ -145,7 +145,7 @@ div[data-testid="stPills"] button[aria-checked="true"] {
 }
 div[data-testid="stExpander"] {border:1px solid #263d4d; border-radius:14px; background:#0d1a28;}
 @media(max-width:640px) {
- .block-container {padding:0.65rem 0.75rem 8rem !important;}
+ .block-container {padding:0.65rem 0.75rem 2.5rem !important;}
  .orb-brand {margin:1px 0 11px;}
  .orb-mark {width:38px;height:38px;flex-basis:38px;border-radius:13px;}
  .orb-live {font-size:9px;padding:6px 7px;}
@@ -154,9 +154,11 @@ div[data-testid="stExpander"] {border:1px solid #263d4d; border-radius:14px; bac
  div[data-testid="stMetricLabel"] {font-size:.75rem;}
  div[data-testid="stDataFrame"] {max-width:100%;}
  h2 {font-size:1.28rem!important;}
- div.st-key-orbit_screen {position:fixed;z-index:995;bottom:max(9px,env(safe-area-inset-bottom));
-   left:10px;right:10px;box-shadow:0 13px 45px #000000b0;}
- div.st-key-orbit_screen button {font-size:12px !important; min-height:48px !important;}
+ /* Mobile: navigation stays in document flow. A fixed five-item control
+    wrapped into two rows on iOS and covered zone prices and confirmation. */
+ div.st-key-orbit_screen {position:static !important;inset:auto !important;
+   margin-bottom:12px;box-shadow:none;}
+ div.st-key-orbit_screen button {font-size:12px !important;min-height:44px !important;}
  div.st-key-orbit_screen [data-testid="stSegmentedControl"] {overflow-x:auto;}
 }
 </style>
@@ -169,7 +171,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.8</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.8.1</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -253,20 +255,31 @@ def _watch_price_panel(plan, title: str, quote: str = "USDT") -> None:
                "Stop และ Net R:R; ถ้าไม่ผ่านยังคง WAIT")
 
 
-def _support_resistance_panel(candles: pd.DataFrame, quote: str = "USDT") -> None:
+def _support_resistance_panel(candles: pd.DataFrame, quote: str = "USDT",
+                              current_price: float | None = None) -> None:
     st.markdown("### 📊 แนวรับ–แนวต้าน (แสดงไม่ว่าสถานะใด)")
     levels = support_resistance(candles)
     if levels is None:
         st.warning("ข้อมูลแท่งราคาที่ปิดแล้วไม่พอคำนวณแนวรับ–แนวต้าน")
         return
     support, resistance = levels
+    broken_support = (current_price is not None and current_price > 0 and
+                      current_price < support.low)
+    broken_resistance = (current_price is not None and current_price > 0 and
+                         current_price > resistance.high)
     st.markdown(
         '<div class="orb-zone-prices">'
-        f'<div class="orb-zone-price"><small>🟢 แนวรับ ({escape(quote)})</small>'
+        f'<div class="orb-zone-price"><small>{"🔴 แนวรับเดิมที่หลุด" if broken_support else "🟢 แนวรับ"} ({escape(quote)})</small>'
         f'{escape(concise_price(support.low))}<small>ถึง {escape(concise_price(support.high))}</small></div>'
-        f'<div class="orb-zone-price"><small>🔴 แนวต้าน ({escape(quote)})</small>'
+        f'<div class="orb-zone-price"><small>{"🟠 แนวต้านเดิมที่ทะลุ" if broken_resistance else "🔴 แนวต้าน"} ({escape(quote)})</small>'
         f'{escape(concise_price(resistance.low))}<small>ถึง {escape(concise_price(resistance.high))}</small></div>'
         '</div>', unsafe_allow_html=True)
+    if broken_support:
+        st.warning("แนวรับอ้างอิงนี้อยู่เหนือราคาล่าสุดแล้ว จึงไม่ถือเป็นจุดรอซื้อ · "
+                   "ต้องรอโครงสร้างแนวรับใหม่จากแท่งปิด")
+    if broken_resistance:
+        st.warning("แนวต้านอ้างอิงนี้อยู่ใต้ราคาล่าสุดแล้ว จึงไม่ถือเป็นจุดเปิด Short · "
+                   "รอประเมินแนวต้านใหม่")
     st.caption("ประเมินจากแท่งราคาที่ปิดแล้วและ ATR · เป็นระดับเฝ้าดู ไม่ได้แปลว่าราคาจะเด้ง/ย่อตรงนี้แน่นอน")
 
 
@@ -288,7 +301,7 @@ def scalp_screen() -> None:
     from scalp_engine import scalp_evidence, scalp_watch_zones
     from zone_signal import evaluate_zone
 
-    st.markdown("## 🎯 Scalp Signal v5.8 · LIVE ZONE DECISION")
+    st.markdown("## 🎯 Scalp Signal v5.8.1 · LIVE ZONE DECISION")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -334,10 +347,11 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
-    _support_resistance_panel(snap.frames["5m"])
-    st.markdown("### 🗺️ โซนเฝ้าราคา 1–3 (แสดงแม้ WAIT)")
-    st.caption("โซนทางเลือกจาก EMA21 และแนวรับ/ต้านของแท่ง 5m ที่ปิดแล้ว · "
-               "ไม่ใช่แผนแบ่งซื้อ 3 ไม้ ไม่ใช่คำสั่งซื้อ และไม่ใช่โซนรับประกันว่าจะเด้ง")
+    _support_resistance_panel(snap.frames["5m"], current_price=(snap.bid + snap.ask) / 2)
+    st.markdown("### 🗺️ โซนเฝ้าราคา (สูงสุด 3 โซน · แสดงแม้ WAIT)")
+    st.caption("เลือกเฉพาะแนวที่ยังไม่ถูกทะลุจาก EMA21 / จุดกลับตัว / แท่ง 5m ปิดแล้ว · "
+               "โซนเดิมที่หลุดจะไม่ถูกนำกลับมาใช้เป็นจุดรอซื้อหรือ Short · "
+               "ไม่ใช่แผนแบ่งซื้อ 3 ไม้")
     watch_sides = (["LONG"] if venue == "BINANCE_TH_SPOT" else
                    [ob.side] if ob.side in ("LONG", "SHORT") else ["LONG", "SHORT"])
     for watch_side in watch_sides:
@@ -362,6 +376,10 @@ def scalp_screen() -> None:
                 css = ("in-zone" if zone["state"] == "IN_ZONE" else
                        "invalid" if decision.state in ("RISK_BLOCK", "INVALIDATED") else "")
                 low, high = concise_price(zone["low"]), concise_price(zone["high"])
+                location = ("อยู่ในโซน · ตรวจแท่งยืนยัน" if zone["state"] == "IN_ZONE"
+                            else (f"ห่างจากขอบโซน {zone['distance_pct'] * 100:.1f} bps"
+                                  if zone["distance_pct"] < 0.01 else
+                                  f"ห่างจากขอบโซน {zone['distance_pct']:.2f}%"))
                 st.markdown(
                     f'<div class="orb-zone {css}">'
                     f'<div class="orb-zone-head"><span>{escape(zone["name"])}</span>'
@@ -371,7 +389,7 @@ def scalp_screen() -> None:
                     f'<div class="orb-zone-price"><small>ราคาสูง (USDT)</small>{escape(high)}</div>'
                     f'</div>'
                     f'<div class="orb-zone-sub">อ้างอิง: {escape(zone["basis"])}'
-                    f' · ห่างจากขอบโซน {zone["distance_pct"]:.2f}%</div></div>',
+                    f' · {escape(location)}</div></div>',
                     unsafe_allow_html=True)
                 if decision.state == "ZONE_READY" and zone["name"] != primary_name:
                     st.info("โซนยืนยันซ้อนกัน · ใช้โซนที่ใกล้ราคามากที่สุดเป็นแผนหลักเพียงหนึ่งโซน")
@@ -395,6 +413,12 @@ def scalp_screen() -> None:
                             st.markdown(f"{'✅' if passed else '🟡'} **{check_name}** — {explanation}")
                         st.caption("เงื่อนไขต้นทุน/Depth/Stop/Net R:R ตรวจต่อเมื่อแท่งยืนยันผ่าน · "
                                    "การผ่านเชิงเทคนิคไม่ใช่อัตราชนะที่รับประกัน")
+        else:
+            st.warning(("BUY / LONG" if watch_side == "LONG" else "SHORT") +
+                       " · ยังไม่มีโซนโครงสร้างที่ไม่ถูกทะลุในข้อมูลแท่ง 5m ล่าสุด · "
+                       "ไม่อ้างแนวเดิมที่หลุดเป็นจุดเข้า และไม่คาดเดาราคาใหม่")
+            st.caption("ติดตาม Bid/Ask และแนวรับ–แนวต้านอ้างอิงด้านบนต่อได้ · "
+                       "ระบบจะค้นหาโซนใหม่เมื่อแท่ง 5m ปิดและข้อมูลรีเฟรช")
     st.caption("แต่ละโซนตรวจสถานะของตัวเองทุกครั้งที่หน้า Scalp รีเฟรช (~60 วินาที) · "
                "ZONE READY เป็นสัญญาณจำลองแยกจาก Strategy ด้านบน และยังไม่ผ่านการพิสูจน์ผลกำไร · "
                "ถึงโซนไม่ได้แปลว่าเข้าได้ทันที")
@@ -440,7 +464,10 @@ def _spot_chart(symbol: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=180, show_spinner=False)
 def _spot_watch_candles(symbol: str) -> pd.DataFrame:
-    return fetch_klines(symbol, "1h", 90).tail(60)
+    # fetch_klines explicitly requires at least 250 closed candles. Asking for
+    # 90 raised PublicDataError on every Spot watch panel, leaving all prices
+    # blank even though the underlying API was healthy.
+    return fetch_klines(symbol, "1h", 250).tail(60)
 
 
 def _navigate_lab(symbol: str):
@@ -477,7 +504,8 @@ def spot_screen(symbol: str, watch_token: str | None) -> None:
     look = spot_look(observation.status)
     _signal_card(look, symbol, observation.last_price, "BINANCE SPOT")
     try:
-        _support_resistance_panel(_spot_watch_candles(symbol))
+        _support_resistance_panel(_spot_watch_candles(symbol),
+                                  current_price=observation.last_price)
     except (ValueError, RuntimeError, KeyError, TypeError, OSError, IndexError):
         st.warning("แนวรับ–แนวต้าน Spot ยังไม่มีข้อมูลแท่ง 1h ที่ตรวจสอบได้")
     st.markdown('<div class="orb-section"><strong>แผนราคา</strong><span class="orb-subtle">USDT · ไม่ใช่คำสั่งซื้อ</span></div>',
@@ -618,7 +646,7 @@ def futures_screen(symbol: str) -> None:
 </div>""", unsafe_allow_html=True)
     st.markdown('<div class="orb-section"><strong>แผนเข้า–ออก</strong><span class="orb-subtle">ประเมินจาก Futures</span></div>',
                 unsafe_allow_html=True)
-    _support_resistance_panel(chart, quote)
+    _support_resistance_panel(chart, quote, current_price=ob.last_price)
     if ob.entry_low is None or ob.entry_high is None:
         _watch_price_panel(indicative_zone(chart, side="LONG"),
                            "Futures · แนวรับสำหรับเฝ้า LONG", quote)
