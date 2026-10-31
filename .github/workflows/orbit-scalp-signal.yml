@@ -2,9 +2,7 @@ name: Orbit Scalp Signal v5.8 (AUTO REGIME / Spot TH / Futures / Bitget)
 
 on:
   schedule:
-    # GitHub's shortest schedule is 5min (best effort, may be delayed).
-    # Offset 3min after 5m closed candles. Changed cron registers scheduler anew.
-    - cron: "3,8,13,18,23,28,33,38,43,48,53,58 * * * *"
+    - cron: "4,9,14,19,24,29,34,39,44,49,54,59 * * * *"
   workflow_dispatch:
     inputs:
       mode:
