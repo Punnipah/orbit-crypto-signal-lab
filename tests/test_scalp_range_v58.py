@@ -80,6 +80,22 @@ class RangeTests(unittest.TestCase):
         ob = evaluate_scalp(sideways(), replace(self.settings(), enable_range_scalp=False))
         self.assertEqual(ob.strategy, "TREND_BREAKOUT")
 
+    def test_early_reversal_watch_is_advisory_not_buy(self):
+        snap = sideways()
+        frames = {tf: frame.copy() for tf, frame in snap.frames.items()}
+        # 15m still bearish even though a 1m taker-buy recovery appears at support.
+        fifteen = frames["15m"]
+        for idx in range(len(fifteen)):
+            price = 102.0 - idx * .025
+            fifteen.iloc[idx, fifteen.columns.get_loc("close")] = price
+        one = frames["1m"]
+        one.iloc[-2, one.columns.get_loc("close")] = 99.0
+        snap = replace(snap, frames=frames, bid=99.21, ask=99.28)
+        ob = evaluate_scalp(snap, self.settings())
+        self.assertIn("EARLY BUY WATCH", ob.early_reversal_note)
+        self.assertIn("ยังไม่ใช่สัญญาณซื้อ", ob.early_reversal_note)
+        self.assertNotEqual(ob.state, "EARLY_BUY")
+
 
 if __name__ == "__main__":
     unittest.main()
