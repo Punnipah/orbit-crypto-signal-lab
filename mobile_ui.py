@@ -65,21 +65,21 @@ header[data-testid="stHeader"] { background: transparent; }
 .orb-name { font-size: clamp(18px,4.8vw,27px); font-weight: 850; color: #f0f9ff; line-height: 1.05;
   letter-spacing: -.75px; }
 .orb-name em { font-style: normal; color: #70e9bb; }
-.orb-version { color: #8fa8bb; font-size: 11px; margin-top: 5px; letter-spacing: 1.2px; }
+.orb-version { color: #d1e5f1; font-size: 12px; margin-top: 5px; letter-spacing: .8px; font-weight:700; }
 .orb-live { white-space: nowrap; color: #85eac1; background:#0d302e;
   border:1px solid #1e6157; font-size:10px; letter-spacing:.5px;
   font-weight:800; padding:7px 9px; border-radius:40px; }
 .orb-section { display:flex; justify-content:space-between; align-items:center; gap:10px;
   margin-top:11px; margin-bottom:9px; }
 .orb-section strong { color:#e9f5fa; font-size:17px; font-weight:780; }
-.orb-subtle { color:#93acbd; font-size:12px; }
+.orb-subtle { color:#d3e5f0; font-size:13px; font-weight:600; }
 .orb-hero { border:1px solid #36586b; background: linear-gradient(125deg,#173849,#0b2231 67%,#17294c);
   box-shadow: 0 15px 42px #00000045; border-radius:24px; padding:21px;
   margin: 13px 0 10px; overflow:hidden; }
 .orb-hero.good {border-color:#287967; background:linear-gradient(115deg,#12342f,#0d202f 70%);}
 .orb-hero.danger {border-color:#7b344a; background:linear-gradient(115deg,#361d2d,#111e2e 80%);}
 .orb-hero.warning {border-color:#65603e;}
-.orb-hero-title {font-size:13px; color:#a6bfce; margin-bottom:5px; font-weight:600;}
+.orb-hero-title {font-size:14px; color:#e1eff6; margin-bottom:5px; font-weight:700;}
 .orb-hero-value {font-size:clamp(25px,7vw,39px); font-weight:850; letter-spacing:-.9px;
   line-height:1.13; color:#f5fbff; overflow-wrap:anywhere; font-variant-numeric:tabular-nums;}
 .orb-hero-detail { margin-top:9px; display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
@@ -94,14 +94,14 @@ header[data-testid="stHeader"] { background: transparent; }
 .orb-kv {border:1px solid #2c4b59; background:linear-gradient(145deg,#142c39,#0c1d2c);padding:15px 13px;border-radius:17px;min-width:0;}
 .orb-kv b {font-size:clamp(14px,3.8vw,21px);display:block; color:#eefaff; margin-top:6px;
   overflow-wrap:anywhere; letter-spacing:-.3px; font-variant-numeric:tabular-nums;}
-.orb-kv-label {color:#8ca7b7;font-size:11px;font-weight:700;letter-spacing:.3px;}
+.orb-kv-label {color:#d8e9f2;font-size:13px;font-weight:750;letter-spacing:.2px;}
 .orb-pair-grid {display:grid; grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:9px 0;}
 .orb-pair {background:#10202e;border:1px solid #264152;border-radius:15px;padding:14px 12px;}
 .orb-pair.active-long {border-color:#1eab7e;background:#11362d;}
 .orb-pair.active-short {border-color:#da687d;background:#352332;}
 .orb-pair h4 {margin:0;color:#edf7fa;font-size:15px;}
-.orb-pair p {margin:5px 0 0;color:#99b3c2;font-size:12px;}
-.orb-footnote {font-size:11px; color:#7896a8; padding:9px 0 2px;}
+.orb-pair p {margin:5px 0 0;color:#d7e7f0;font-size:13px;line-height:1.5;}
+.orb-footnote {font-size:13px; color:#c8e0ef; padding:9px 0 2px;line-height:1.55;}
 /* Scalp watch levels: high contrast and tabular digits even on small phones. */
 .orb-zone {background:#122f40;border:1px solid #4e8298;border-radius:16px;
   padding:16px;margin:10px 0;box-shadow:0 4px 18px #0005;}
@@ -115,7 +115,22 @@ header[data-testid="stHeader"] { background: transparent; }
   min-width:0;color:#fff;font-size:clamp(17px,4.7vw,25px);line-height:1.35;
   font-weight:850;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;letter-spacing:.1px;}
 .orb-zone-price small {display:block;font-size:12px;color:#c6dce8;margin-bottom:5px;font-weight:700;}
-.orb-zone-sub {color:#b9d7e6;font-size:13px;line-height:1.5;}
+.orb-zone-sub {color:#e0eff8;font-size:14px;line-height:1.6;}
+/* v5.9 readability patch: keep every trade state and risk calculation unchanged. */
+[data-testid="stMarkdownContainer"] > p,
+[data-testid="stMarkdownContainer"] > ul > li,
+[data-testid="stMarkdownContainer"] > ol > li { color:#edf6fc; line-height:1.65; }
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+div[data-testid="stMetricLabel"] { color:#d2e5f1 !important; font-size:13px; font-weight:650; }
+div[data-testid="stMetricValue"] { color:#f7fcff !important; font-weight:800; }
+[data-testid="stWidgetLabel"] p,
+[data-testid="stExpander"] summary,
+[data-testid="stAlert"] p { color:#f1f8fd !important; font-weight:650; }
+div[data-testid="stSegmentedControl"] button,
+div[data-testid="stPills"] button {font-weight:800 !important;}
+div[data-testid="stSegmentedControl"] button p,
+div[data-testid="stPills"] button p {color:inherit !important;}
 div[data-testid="stSegmentedControl"] button, div[data-testid="stPills"] button {min-height:42px;}
 div[data-testid="stSegmentedControl"] button {border-radius:14px !important; font-weight:750;}
 div.st-key-orbit_screen {background:#0a1d2be8;border:1px solid #224657;border-radius:18px;padding:6px;backdrop-filter:blur(16px);}
@@ -131,7 +146,7 @@ div.stButton > button p, div.stDownloadButton > button p,
 div.stFormSubmitButton > button p {color:inherit !important;}
 div.stButton > button:disabled, div.stDownloadButton > button:disabled {
   background:#1d303b !important; color:#a2b4c0 !important;
-  border-color:#374b55 !important; opacity:.75 !important;
+  border-color:#526c7c !important; opacity:1 !important;
 }
 div.stButton > button:hover:not(:disabled), div.stDownloadButton > button:hover:not(:disabled) {
   background:#1d5c61 !important; border-color:#70e9bb !important;
