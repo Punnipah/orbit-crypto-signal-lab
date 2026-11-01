@@ -151,10 +151,27 @@ div.stButton > button:disabled, div.stDownloadButton > button:disabled {
 div.stButton > button:hover:not(:disabled), div.stDownloadButton > button:hover:not(:disabled) {
   background:#1d5c61 !important; border-color:#70e9bb !important;
 }
+/* Navigation/coin selectors: Streamlit may render WHITE unselected buttons.
+   Force a dark surface for both states, so no label can become white-on-white. */
 div[data-testid="stSegmentedControl"] button,
-div[data-testid="stPills"] button {color:#142b37 !important;}
+div[data-testid="stPills"] button {
+  background:#193749 !important;
+  color:#f5fbff !important;
+  border:1px solid #5a8296 !important;
+  opacity:1 !important;
+  font-weight:800 !important;
+}
+div[data-testid="stSegmentedControl"] button p,
+div[data-testid="stPills"] button p,
+div[data-testid="stSegmentedControl"] button span,
+div[data-testid="stPills"] button span {
+  color:#f5fbff !important;
+  opacity:1 !important;
+}
 div[data-testid="stSegmentedControl"] button[aria-checked="true"],
-div[data-testid="stPills"] button[aria-checked="true"] {
+div[data-testid="stPills"] button[aria-checked="true"],
+div[data-testid="stSegmentedControl"] button[aria-pressed="true"],
+div[data-testid="stPills"] button[aria-pressed="true"] {
   background:#174c49 !important; color:#e6fff5 !important;
   border-color:#55d7ae !important;
 }
