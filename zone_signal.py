@@ -43,26 +43,72 @@ def evaluate_zone(snapshot: MarketSnapshot, settings: ScalpSettings, zone: dict,
         return result("DATA_UNAVAILABLE", "Quote เก่าหรือเวลาข้อมูลไม่ถูกต้อง")
     if zone["state"] == "INVALIDATED":
         return result("INVALIDATED", "โครงสร้างแนวรับ/แนวต้านหลุดแล้ว ต้องคำนวณโซนใหม่")
-    if zone["state"] != "IN_ZONE":
-        return result("WAIT_PRICE", "ราคายังไม่แตะโซน · แสดงโซนไว้เฝ้าดู")
-
     one, five, fifteen = (snapshot.frames[k] for k in ("1m", "5m", "15m"))
     if min(len(one), len(five), len(fifteen)) < 50:
         return result("DATA_UNAVAILABLE", "แท่งที่ปิดแล้วไม่เพียงพอ")
+    quote = float(snapshot.ask if side == "LONG" else snapshot.bid)
+    atr = _atr(five)
+    follow_through = min(atr * .40, (zone["high"] - zone["low"]) * 1.20)
+    # After a *real* recent touch, a confirmation candle may close just past
+    # the zone boundary. It is still a small rebound, not chasing a breakout.
+    rebound = (zone["state"] == "WATCH" and
+               ((side == "LONG" and zone["high"] < quote <= zone["high"] + follow_through) or
+                (side == "SHORT" and zone["low"] - follow_through <= quote < zone["low"])))
+    if zone["state"] != "IN_ZONE" and not rebound:
+        recent_touch = any(float(r.low) <= zone["high"] and
+                           float(r.high) >= zone["low"]
+                           for _, r in one.tail(3).iterrows())
+        far_rebound = ((side == "LONG" and quote > zone["high"] + follow_through) or
+                       (side == "SHORT" and quote < zone["low"] - follow_through))
+        if recent_touch and far_rebound:
+            return result("MISSED", "เด้งจากโซนไปไกลเกินระยะเข้าแล้ว · ไม่ไล่ราคา")
+        return result("WAIT_PRICE", "ราคายังไม่แตะโซน · แสดงโซนไว้เฝ้าดู")
+
     latest = one.iloc[-1]
     last_ms = int(latest.open_ms) + 60_000
     age = (now.timestamp() * 1000 - last_ms) / 1000
-    touched_1m = float(latest.low) <= zone["high"] and float(latest.high) >= zone["low"]
+    touched_1m = False
+    for _, r in one.tail(3).iterrows():
+        if float(r.low) <= zone["high"] and float(r.high) >= zone["low"]:
+            touched_1m = True
     touched_5m = any(float(r.low) <= zone["high"] and float(r.high) >= zone["low"]
                       for _, r in five.tail(2).iterrows())
-    reaction = (float(latest.close) > float(latest.open) if side == "LONG" else
-                float(latest.close) < float(latest.open))
-    base_volume = float(one.volume.iloc[-21:-1].mean())
-    volume_ok = (base_volume > 0 and math.isfinite(base_volume) and
-                 float(latest.volume) >= base_volume * settings.volume_multiplier)
-    taker = float(latest.taker_buy / latest.volume) if latest.volume > 0 else float("nan")
-    flow_ok = math.isfinite(taker) and (taker >= settings.min_taker_buy_share_long if
-                                        side == "LONG" else taker <= settings.max_taker_buy_share_short)
+    # Each confirmation candidate must independently pass the volume, taker
+    # share, recency and reaction checks; never combine passes from different
+    # candles. Allow up to three consecutive CLOSED 1m bars after zone touch.
+    verified = None
+    for pos in range(len(one) - 1, len(one) - 4, -1):
+        row = one.iloc[pos]
+        row_ms = int(row.open_ms) + 60_000
+        row_age = (now.timestamp() * 1000 - row_ms) / 1000
+        touch_window = one.iloc[max(len(one) - 3, pos - 2):pos + 1]
+        visited = any(float(r.low) <= zone["high"] and float(r.high) >= zone["low"]
+                      for _, r in touch_window.iterrows())
+        reversal = (float(row.close) > float(row.open) if side == "LONG" else
+                    float(row.close) < float(row.open))
+        base = float(one.volume.iloc[pos - 20:pos].mean())
+        volume = bool(math.isfinite(base) and base > 0 and
+                      float(row.volume) >= base * settings.volume_multiplier)
+        share = float(row.taker_buy / row.volume) if row.volume > 0 else float("nan")
+        flow = math.isfinite(share) and (share >= settings.min_taker_buy_share_long if
+                                         side == "LONG" else share <= settings.max_taker_buy_share_short)
+        if visited and reversal and volume and flow and 0 <= row_age <= settings.ready_expiry_seconds:
+            verified = (row, row_ms, row_age, share)
+            break
+    if verified is not None:
+        last_ms, age, taker = verified[1], verified[2], verified[3]
+        reaction = True
+        volume_ok = True
+        flow_ok = True
+    else:
+        reaction = (float(latest.close) > float(latest.open) if side == "LONG" else
+                    float(latest.close) < float(latest.open))
+        base_volume = float(one.volume.iloc[-21:-1].mean())
+        volume_ok = bool(base_volume > 0 and math.isfinite(base_volume) and
+                         float(latest.volume) >= base_volume * settings.volume_multiplier)
+        taker = float(latest.taker_buy / latest.volume) if latest.volume > 0 else float("nan")
+        flow_ok = math.isfinite(taker) and (taker >= settings.min_taker_buy_share_long if
+                                            side == "LONG" else taker <= settings.max_taker_buy_share_short)
     ema9, ema21 = _ema(fifteen.close, 9), _ema(fifteen.close, 21)
     bearish = (ema9.iloc[-1] < ema21.iloc[-1] and
                float(fifteen.close.iloc[-1]) < ema21.iloc[-1] and
@@ -76,17 +122,16 @@ def evaluate_zone(snapshot: MarketSnapshot, settings: ScalpSettings, zone: dict,
     checks = (("15m บริบทแนวโน้ม", bool(trend_ok), "ไม่สวนแนวโน้มแรง หรือ 5m เป็นตลาด Range"),
               ("5m แตะโซน", bool(touched_5m), "มีแท่ง 5m ปิดแล้วสัมผัสโซนล่าสุด"),
               ("1m ปิดแท่งกลับตัว", bool(touched_1m and reaction and 0 <= age <= settings.ready_expiry_seconds),
-               f"อายุแท่งล่าสุด {age:.0f} วินาที"),
+               f"ยืนยันภายใน 3 แท่ง 1m · อายุแท่งยืนยัน {age:.0f} วินาที"),
               ("1m Volume", bool(volume_ok), f"ต้องผ่าน {settings.volume_multiplier:.2f}x"),
               ("1m Taker Flow", bool(flow_ok), f"Taker Buy {taker:.0%}" if math.isfinite(taker) else "ข้อมูล Flow ไม่ครบ"))
     if not trend_ok:
         return result("RISK_BLOCK", "สวนแนวโน้ม 15m ที่แรงเกินเกณฑ์ Range", checks=checks)
     if not all(ok for _, ok, _ in checks):
-        return result("WAIT_CONFIRM", "ราคาเข้าโซนแล้ว แต่ยังขาดเงื่อนไขแท่ง 5m/1m หรือ Volume/Flow",
+        return result("WAIT_CONFIRM", "ราคาเข้า/เด้งใกล้โซนแล้ว แต่ยังขาดเงื่อนไข 5m/1m หรือ Volume/Flow",
                       checks=checks)
 
     price = snapshot.ask if side == "LONG" else snapshot.bid
-    atr = _atr(five)
     atr_pct = atr / price * 100
     tick_bps = float(snapshot.instrument.tick_price) / price * 10_000
     spread_limit = max(settings.max_spread_bps, min(25.0, atr_pct * 25.0))

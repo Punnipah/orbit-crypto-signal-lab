@@ -35,8 +35,10 @@ class FixedTPPreview:
 
 def fixed_tp_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: str,
                      *, entry: float | None = None, stop: float | None = None,
-                     qty: float | None = None, signal_ready: bool = False) -> FixedTPPreview:
-    """Evaluate an optional TP exactly 10 USDT away in the quote price.
+                     qty: float | None = None, signal_ready: bool = False,
+                     price_move_usdt: Decimal = FIXED_PRICE_MOVE_USDT,
+                     plan_label: str = "TP 10 USDT") -> FixedTPPreview:
+    """Evaluate an optional quote-price TP; default is a fixed 10 USDT move.
 
     `signal_ready=False` is a *hypothetical quote preview*, never permission
     to trade even if after-cost reward looks favorable. Spot short is forbidden.
@@ -46,6 +48,8 @@ def fixed_tp_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: st
         raise ValueError("side must be LONG or SHORT")
     if not settings.paper_only:
         raise ValueError("fixed TP is PAPER ONLY")
+    if not price_move_usdt.is_finite() or price_move_usdt <= 0:
+        raise ValueError("price move must be positive")
     price = float(entry if entry is not None else
                   snapshot.ask if side == "LONG" else snapshot.bid)
     if not math.isfinite(price) or price <= 0:
@@ -63,10 +67,10 @@ def fixed_tp_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: st
     if side == "SHORT" and snapshot.venue == "BINANCE_TH_SPOT":
         return preview("MARKET_BLOCK", "Spot ไม่สามารถเปิด Short ได้", None)
 
-    raw = Decimal(str(price)) + (FIXED_PRICE_MOVE_USDT if side == "LONG" else
-                                 -FIXED_PRICE_MOVE_USDT)
+    raw = Decimal(str(price)) + (price_move_usdt if side == "LONG" else
+                                 -price_move_usdt)
     if raw <= 0:
-        return preview("DISTANCE_BLOCK", "TP 10 USDT ทำให้ราคาฝั่ง SHORT ต่ำกว่าศูนย์", None)
+        return preview("DISTANCE_BLOCK", f"{plan_label} ทำให้ราคาฝั่ง SHORT ต่ำกว่าศูนย์", None)
     target = _tick_price(float(raw), snapshot.instrument.tick_price,
                          ROUND_UP if side == "LONG" else ROUND_DOWN)
     if not math.isfinite(target) or target <= 0:
@@ -77,7 +81,7 @@ def fixed_tp_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: st
     move_pct = move * 100
     if move_pct > MAX_PRICE_MOVE_PCT:
         return preview("DISTANCE_BLOCK",
-                       f"ราคา +/−10 USDT คิดเป็น {move_pct:,.1f}% ของราคาเหรียญ "
+                       f"{plan_label} คิดเป็น {move_pct:,.1f}% ของราคาเหรียญ "
                        f"สูงกว่าเพดานจำลอง {MAX_PRICE_MOVE_PCT:.1f}% · "
                        "ไม่เหมาะกับเหรียญราคาต่ำอย่าง PEPE", target, move_pct)
 
@@ -106,7 +110,7 @@ def fixed_tp_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: st
     cost = notional * cost_fraction
     net = gross - cost
     if net <= 0:
-        return preview("COST_BLOCK", "TP 10 USDT ไม่เหลือกำไรหลัง Fee / Spread / Slippage ประเมิน",
+        return preview("COST_BLOCK", f"{plan_label} ไม่เหลือกำไรหลัง Fee / Spread / Slippage ประเมิน",
                        target, move_pct, notional=notional, gross=gross,
                        costs=cost, net=net)
 
@@ -127,9 +131,37 @@ def fixed_tp_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: st
                            f"Net R:R {net_rr:.2f}:1 ต่ำกว่าเกณฑ์ {settings.min_net_rr:.2f}:1",
                            target, move_pct, notional=notional, gross=gross,
                            costs=cost, net=net, rr=net_rr)
-        return preview("ALTERNATIVE_READY", "เป้าระยะราคา 10 USDT ผ่านต้นทุนและ R:R จำลอง",
+        return preview("ALTERNATIVE_READY", f"{plan_label} ผ่านต้นทุนและ R:R จำลอง",
                        target, move_pct, notional=notional, gross=gross,
                        costs=cost, net=net, rr=net_rr)
     return preview("WATCH_ONLY", "เป็นตัวอย่างจาก Bid/Ask ยังไม่มีสัญญาณเข้า",
                    target, move_pct, notional=notional, gross=gross,
                    costs=cost, net=net, rr=net_rr)
+
+
+def pepe_point_unit(entry: float) -> Decimal:
+    """Human 'point' at the third significant decimal of PEPE quote price.
+
+    This is deliberately *not* an exchange tick. For example:
+      0.0000488 -> 1 point = 0.0000001
+      0.00000488 -> 1 point = 0.00000001
+    Both give +10 points ~2% gross. The UI must display the unit explicitly.
+    """
+    if not math.isfinite(entry) or entry <= 0:
+        raise ValueError("invalid PEPE reference price")
+    return Decimal(1).scaleb(Decimal(str(entry)).adjusted() - 2)
+
+
+def pepe_daily_ten_preview(snapshot: MarketSnapshot, settings: ScalpSettings, side: str,
+                           *, entry: float | None = None, stop: float | None = None,
+                           qty: float | None = None,
+                           signal_ready: bool = False) -> FixedTPPreview:
+    """One-trade daily target, +10 human points; never implies guaranteed fill."""
+    if snapshot.symbol != "PEPEUSDT":
+        raise ValueError("daily 10-point mode is currently PEPEUSDT only")
+    reference = float(entry if entry is not None else
+                      snapshot.ask if side == "LONG" else snapshot.bid)
+    point = pepe_point_unit(reference)
+    return fixed_tp_preview(snapshot, settings, side, entry=entry, stop=stop,
+                            qty=qty, signal_ready=signal_ready,
+                            price_move_usdt=point * 10, plan_label="TP 10 จุดของ PEPE")

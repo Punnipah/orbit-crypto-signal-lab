@@ -174,6 +174,13 @@ def fetch_bitget_snapshot(symbol: str, *, catalog: dict[str, Instrument] | None 
     frames = {tf: parse_bitget_candles(
         _api("candles", {**p, "interval": tf, "limit": 140}), tf, now)
         for tf in ("15m", "5m", "1m")}
+    # Optional closed 1H context for range watch; never relax the hard gate
+    # requiring complete public taker-volume evidence for Bitget READY.
+    try:
+        frames["1h"] = parse_bitget_candles(
+            _api("candles", {**p, "interval": "1h", "limit": 140}), "1h", now)
+    except MarketDataError:
+        pass
     tickers = _api("tickers", p)
     if (not isinstance(tickers, list) or len(tickers) != 1
             or not isinstance(tickers[0], dict) or tickers[0].get("symbol") != symbol):

@@ -22,7 +22,7 @@ import pandas as pd
 
 SPOT_URL = "https://api.binance.th"
 FUTURES_URL = "https://fapi.binance.com"
-PERIOD = {"1m": 60_000, "5m": 300_000, "15m": 900_000}
+PERIOD = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000}
 SYMBOL = re.compile(r"[A-Z0-9]{2,18}USDT\Z")
 
 
@@ -224,6 +224,15 @@ def fetch_snapshot(venue: str, symbol: str, *, catalog: dict[str, Instrument] | 
     for tf in ("15m", "5m", "1m"):
         rows = _get_json(base, prefix + "/klines", {"symbol": symbol, "interval": tf, "limit": 140})
         frames[tf] = parse_closed_klines(rows, tf, now)
+    # Optional 1H range context. Never turn a healthy 1m/5m/15m snapshot into
+    # DATA UNAVAILABLE merely because an extra timeframe cannot be fetched.
+    # The range engine falls back to its established 5m-only safety gates.
+    try:
+        rows_1h = _get_json(base, prefix + "/klines",
+                            {"symbol": symbol, "interval": "1h", "limit": 140})
+        frames["1h"] = parse_closed_klines(rows_1h, "1h", now)
+    except MarketDataError:
+        pass
     quote = _get_json(base, prefix + "/ticker/bookTicker", {"symbol": symbol})
     bid, ask = parse_quote(quote, symbol)
     if venue == "BINANCE_GLOBAL_USDM":

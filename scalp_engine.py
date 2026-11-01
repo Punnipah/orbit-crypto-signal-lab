@@ -337,6 +337,17 @@ def scalp_watch_zones(snapshot: MarketSnapshot, side: str = "LONG") -> list[dict
     price_column = "low" if side == "LONG" else "high"
     anchors: list[tuple[float, str]] = [
         (float(_ema(five.close, 21).iloc[-1]), "EMA21 5m")]
+    hour = snapshot.frames.get("1h")
+    if hour is not None and len(hour) >= 55:
+        # Only fully closed 1H bars. An hourly floor/ceiling is useful for
+        # range watch planning, but does not by itself grant entry approval.
+        hourly = hour.iloc[-13:-1]
+        hourly_adx = _adx(hour)
+        if (len(hourly) == 12 and math.isfinite(hourly_adx) and
+                hourly_adx <= 23.0):
+            hourly_anchor = (float(hourly.low.min()) if side == "LONG"
+                             else float(hourly.high.max()))
+            anchors.append((hourly_anchor, "แนวรับ/ต้าน 1H 12 แท่ง"))
     for lookback in (12, 24, 48, 96):
         sample = history.tail(lookback)[price_column]
         if len(sample) >= min(lookback, 12):
@@ -380,6 +391,59 @@ def scalp_watch_zones(snapshot: MarketSnapshot, side: str = "LONG") -> list[dict
     return zones
 
 
+def _hourly_range_ok(snapshot: MarketSnapshot, settings: ScalpSettings,
+                     current: float) -> bool:
+    """Optional fully closed 1H sideways context; no substitution for 5m risk."""
+    hour = snapshot.frames.get("1h")
+    if hour is None or len(hour) < 55:
+        return False
+    adx = _adx(hour)
+    candles = hour.iloc[-13:-1]
+    bottom, top = float(candles.low.min()), float(candles.high.max())
+    width = (top - bottom) / ((top + bottom) / 2) * 100 if bottom > 0 else 0
+    return (math.isfinite(adx) and adx <= settings.range_max_adx and
+            settings.range_min_width_pct <= width <= settings.range_max_width_pct and
+            bottom <= current <= top)
+
+
+def _range_reversal_candle(one: pd.DataFrame, settings: ScalpSettings,
+                           now: datetime, side: str, edge: float) -> pd.Series | None:
+    """Accept a confirmed 1m bounce in the first three closed bars after touch.
+
+    The same 1m bar need not both touch the support and be green: a later
+    confirmation may be valid, but only while its age and volume/flow pass.
+    """
+    if len(one) < 25:
+        return None
+    previous = one.tail(3)
+    for position in range(len(one) - 1, len(one) - 4, -1):
+        candidate = one.iloc[position]
+        age = (now.timestamp() * 1000 - (int(candidate.open_ms) + 60_000)) / 1000
+        if not 0 <= age <= settings.ready_expiry_seconds:
+            continue
+        # The candidate must follow a real, recent touch of the same edge;
+        # a green candle anywhere in the range is not enough.
+        start = max(len(one) - 3, position - 2)
+        touched = (any(float(r.low) <= edge for _, r in one.iloc[start:position + 1].iterrows())
+                   if side == "LONG" else
+                   any(float(r.high) >= edge for _, r in one.iloc[start:position + 1].iterrows()))
+        if not touched:
+            continue
+        volume_base = float(one.volume.iloc[position - 20:position].mean())
+        if (not math.isfinite(volume_base) or volume_base <= 0 or
+                float(candidate.volume) < volume_base * settings.volume_multiplier):
+            continue
+        ratio = (float(candidate.taker_buy / candidate.volume)
+                 if candidate.volume > 0 else float("nan"))
+        aligned = (candidate.close > candidate.open and
+                   ratio >= settings.min_taker_buy_share_long if side == "LONG" else
+                   candidate.close < candidate.open and
+                   ratio <= settings.max_taker_buy_share_short)
+        if math.isfinite(ratio) and aligned:
+            return candidate
+    return None
+
+
 def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: datetime,
                      atr: float, atr_pct: float, full_spread_limit: float) -> ScalpObservation | None:
     """Independent bounded range-reversal setup, never a blind limit-order suggestion.
@@ -393,7 +457,7 @@ def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: dat
     if len(five) < 65 or len(one) < 30:
         return None
     adx = _adx(five)
-    if not math.isfinite(adx) or adx > settings.range_max_adx:
+    if not math.isfinite(adx):
         return None
     # Exclude the latest bar when deriving the boundaries to avoid moving levels.
     previous = five.iloc[-31:-1]
@@ -403,11 +467,20 @@ def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: dat
     if not settings.range_min_width_pct <= width_pct <= settings.range_max_width_pct:
         return None
     current = float(one.close.iloc[-1])
+    hour_sideways = _hourly_range_ok(snapshot, settings, current)
+    # Slight 5m momentum inside independently confirmed 1H sideways is not
+    # necessarily a new trend. Still cap 5m ADX and retain all later gates.
+    if adx > settings.range_max_adx + (4.0 if hour_sideways else 0.0):
+        return None
     edge_width = (top - bottom) * 0.22
     if current < bottom - edge_width * .25 or current > top + edge_width * .25:
         return None  # broken range, require reclassification on next scans
-    long_edge = current <= bottom + edge_width
-    short_edge = current >= top - edge_width
+    # Follow-through just above a recently touched support (or below resistance)
+    # can be considered while still close to the original edge. Never chase
+    # through the middle of the range. Uses closed 1m evidence only.
+    follow_through = min(atr * .40, (top - bottom) * .10)
+    long_edge = current <= bottom + edge_width + follow_through
+    short_edge = current >= top - edge_width - follow_through
     if not long_edge and not short_edge:
         return ScalpObservation(snapshot.venue, snapshot.symbol, "WAIT",
                                 f"SIDEWAYS · ADX {adx:.1f}; ราคาอยู่กลางกรอบ {bottom:.10g}–{top:.10g}",
@@ -465,23 +538,17 @@ def _range_candidate(snapshot: MarketSnapshot, settings: ScalpSettings, now: dat
         return ScalpObservation(snapshot.venue, snapshot.symbol, "RISK_BLOCK",
                                 "SIDEWAYS · จำนวนขั้นต่ำหรือ Depth ไม่เพียงพอ", now,
                                 side=side, strategy="RANGE_REVERSAL", market_regime="SIDEWAYS")
-    # The newest closed 1m candle must reverse at the edge, with complete
-    # taker-buy evidence. Bitget incomplete public fills => WATCH, never READY.
-    row = one.iloc[-1]
-    age = (now.timestamp() * 1000 - (int(row.open_ms) + 60_000)) / 1000
-    prior_volume = float(one.volume.iloc[-21:-1].mean())
-    ratio = float(row.taker_buy / row.volume) if row.volume > 0 else float("nan")
-    confirmed = (0 <= age <= settings.ready_expiry_seconds and
-                 float(row.volume) >= prior_volume * settings.volume_multiplier and
-                 ((side == "LONG" and row.close > row.open and
-                   ratio >= settings.min_taker_buy_share_long) or
-                  (side == "SHORT" and row.close < row.open and
-                   ratio <= settings.max_taker_buy_share_short)))
+    # Closed 1m confirmation may follow the touch by up to two other bars.
+    # Do not lower the original volume/flow/age/stop/R:R thresholds.
+    edge = bottom + edge_width if side == "LONG" else top - edge_width
+    confirm_row = _range_reversal_candle(one, settings, now, side, edge)
+    confirmed = confirm_row is not None
     setup_open = int(five.open_ms.iloc[-1])
     setup_id = hashlib.sha256(f"{snapshot.venue}:{snapshot.symbol}:RANGE:{side}:{setup_open}".encode()).hexdigest()[:24]
     deadline = datetime.fromtimestamp((setup_open + 300_000) / 1000, timezone.utc) + timedelta(
         minutes=settings.setup_expiry_minutes)
-    confirmed_at = datetime.fromtimestamp((int(row.open_ms) + 60_000) / 1000, timezone.utc) if confirmed else None
+    confirmed_at = (datetime.fromtimestamp((int(confirm_row.open_ms) + 60_000) / 1000,
+                                          timezone.utc) if confirm_row is not None else None)
     return ScalpObservation(snapshot.venue, snapshot.symbol, "READY" if confirmed else "WATCH",
                             f"SIDEWAYS · ADX {adx:.1f} · {'1m กลับตัวยืนยัน' if confirmed else 'รอแท่ง 1m กลับตัวพร้อม Volume/Flow'}; "
                             f"กรอบ {bottom:.10g}–{top:.10g}", now, side=side, setup_id=setup_id,

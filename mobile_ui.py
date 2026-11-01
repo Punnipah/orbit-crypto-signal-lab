@@ -171,7 +171,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.8.2</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.8.4</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -262,6 +262,36 @@ def _fixed_tp_panel(plan, *, approved_signal: bool = False) -> None:
                "ไม่ใช่กำไรสุทธิ 10 USDT ของทั้งไม้ · PAPER ONLY")
 
 
+def _pepe_daily_ten_panel(plan, capital_thb: float, *, approved_signal: bool = False) -> None:
+    """One simulated PEPE position with a 10-human-point target, not an order."""
+    from scalp_fixed_tp import pepe_point_unit
+
+    unit = pepe_point_unit(plan.entry)
+    st.markdown("**🎯 PEPE · 1 ไม้/วัน · TP 10 จุด**" +
+                (" · หลังยืนยันสัญญาณ" if approved_signal else " · ราคาเฝ้าดูเท่านั้น"))
+    _price_grid([("ราคาอ้างอิง Entry (USDT)", plan.entry),
+                 ("TP +10 จุด (USDT)", plan.target)])
+    st.caption(f"นิยาม 1 จุด = {unit:f} USDT · 10 จุด = {unit * 10:f} USDT "
+               "· หน่วยจุดปรับตามหลักทศนิยมของราคา PEPE ไม่ใช่ Tick ของตลาด")
+    if plan.target is not None:
+        gross_pct = (abs(plan.target - plan.entry) / plan.entry) * 100
+        gross_thb = capital_thb * gross_pct / 100
+        st.markdown(f"**กำไรขั้นต้นจำลองจากทุน {capital_thb:,.0f} บาท: "
+                    f"+{gross_thb:,.2f} บาท (+{gross_pct:.2f}%)**")
+        if plan.estimated_net_usdt is not None and plan.notional_usdt > 0:
+            net_thb = capital_thb * plan.estimated_net_usdt / plan.notional_usdt
+            st.caption(f"ประมาณการสุทธิหลัง Fee/Spread/Slippage: {net_thb:+,.2f} บาท "
+                       "· สมมติใช้ทุนทั้งหมด ไม่มี Leverage และอัตราแลกเปลี่ยนคงที่")
+    if plan.state == "ALTERNATIVE_READY" and approved_signal:
+        st.success("🟢 แผน TP 10 จุดผ่านเกณฑ์จำลอง · ตรวจราคาจริงก่อนตัดสินใจ")
+    elif plan.state == "WATCH_ONLY":
+        st.info("⚪ ยังไม่ยืนยันจุดเข้า · " + plan.reason)
+    else:
+        st.error("🔴 ยังใช้ TP 10 จุดนี้ไม่ได้ · " + plan.reason)
+    st.caption("เป้าหมายรายวันไม่ใช่การรับประกันกำไร · PAPER ONLY · "
+               "ห้ามบังคับเปิดไม้เมื่อสัญญาณหรือความเสี่ยงไม่ผ่าน")
+
+
 def _watch_price_panel(plan, title: str, quote: str = "USDT") -> None:
     """Always distinguish provisional levels from a validated entry plan."""
     st.markdown(f"### 🧭 {title} · ราคาเฝ้าดู")
@@ -323,12 +353,12 @@ def _scalp_live(venue: str, symbol: str, refresh_id: int):
 def scalp_screen() -> None:
     """On-page live read-only scan; stops when the Streamlit session closes."""
     from scalp_marketdata import MarketDataError
-    from scalp_engine import scalp_evidence, scalp_watch_zones
+    from scalp_engine import scalp_evidence, scalp_watch_zones, _adx
     from zone_signal import evaluate_zone
 
-    from scalp_fixed_tp import fixed_tp_preview
+    from scalp_fixed_tp import fixed_tp_preview, pepe_daily_ten_preview
 
-    st.markdown("## 🎯 Scalp Signal v5.8.2 · LIVE ZONE DECISION")
+    st.markdown("## 🎯 Scalp Signal v5.8.4 · RANGE SCALP 10 POINTS")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -339,13 +369,36 @@ def scalp_screen() -> None:
              "BITGET_USDT_FUTURES" if "Bitget" in market else "BINANCE_GLOBAL_USDM")
     pairs = ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"]
     symbol = st.selectbox("คู่เหรียญ USDT", pairs, key="scalp_symbol")
-    tp_mode = st.segmented_control(
-        "รูปแบบ Take Profit", ["TP ตามแผนเดิม", "🎯 TP ระยะราคา 10 USDT"],
-        key="scalp_tp_mode", default="TP ตามแผนเดิม", width="stretch")
+    tp_mode = st.selectbox(
+        "รูปแบบ Take Profit", ["TP ตามแผนเดิม", "🎯 TP ระยะราคา 10 USDT",
+                              "🎯 PEPE Daily 10 จุด · 1 ไม้/วัน"],
+        key="scalp_tp_mode", width="stretch")
     fixed_tp = tp_mode == "🎯 TP ระยะราคา 10 USDT"
+    daily_ten = tp_mode == "🎯 PEPE Daily 10 จุด · 1 ไม้/วัน"
+    daily_capital_thb = 100_000.0
+    daily_done = False
     if fixed_tp:
         st.caption("โหมดนี้เพิ่มเป้ากำไรทางเลือกโดยไม่เปลี่ยนจุดเข้าหรือ Stop Loss เดิม · "
                    "หากต้นทุนหรือ Net R:R ไม่ผ่าน จะไม่อนุมัติ TP 10 USDT")
+    if daily_ten:
+        st.caption("เป้าหมาย PEPE วันละหนึ่งไม้: TP +10 จุดจากราคาเข้า (ไม่ใช่ +10 USDT) "
+                   "· สถานะ READY ต้องผ่านจุดเข้า/Stop/ต้นทุน/R:R แยกตามกฎเดิม")
+        if symbol != "PEPEUSDT":
+            st.warning("โหมด Daily 10 จุดรองรับเฉพาะ PEPEUSDT ในตอนนี้ · "
+                       "กรุณาเปลี่ยนคู่เหรียญเป็น PEPEUSDT")
+        else:
+            daily_capital_thb = float(st.number_input(
+                "ทุนจำลองสำหรับคำนวณกำไร (บาท)", min_value=100.0,
+                max_value=100_000_000.0, value=100_000.0, step=1_000.0,
+                key="scalp_daily_capital"))
+            day_key = datetime.now(BKK).strftime("%Y-%m-%d")
+            daily_done = st.checkbox(
+                "วันนี้ปิดไม้แล้ว · หยุดแสดงแผนเข้าใหม่ของโหมด Daily",
+                key=f"scalp_pepe_daily_done_{day_key}")
+            st.caption("บันทึกการปิดไม้เป็นการทำเครื่องหมายด้วยตนเองเฉพาะเซสชันนี้ "
+                       "· ไม่เชื่อมบัญชีซื้อขายและไม่คงอยู่หลังปิด/รีโหลดเว็บ")
+            if daily_done:
+                st.success("✅ วันนี้ปิดไม้แล้ว · งดเข้าเพิ่มในโหมด Daily 10 จุด")
     if "scalp_refresh" not in st.session_state:
         st.session_state["scalp_refresh"] = 0
     if st.button("🔄 ตรวจข้อมูลตลาดล่าสุด", key="scalp_refresh_button", width="stretch"):
@@ -368,14 +421,19 @@ def scalp_screen() -> None:
                "EXIT_WATCH": "SELL WATCH · Spot ขาลง",
                "RISK_BLOCK": "RISK BLOCK · งดเข้า",
                "WAIT": "WAIT · รอรูปแบบราคา"}.get(ob.state, ob.state)
+    hero_reason = ob.reason
+    if daily_ten and symbol == "PEPEUSDT" and daily_done:
+        heading = "DAILY DONE · ปิดไม้วันนี้แล้ว"
+        hero_reason = "โหมด Daily 10 จุด: วันนี้ปิดไม้แล้ว · ไม่เสนอการเข้าใหม่"
+        color = "good"
     st.markdown(f'<div class="orb-hero {color}">'
                 f'<div class="orb-hero-title">{escape(symbol)} · {escape(market)}</div>'
                 f'<div class="orb-hero-value">{escape(heading)}</div>'
-                f'<div class="orb-hero-note">{escape(ob.reason)}</div></div>',
+                f'<div class="orb-hero-note">{escape(hero_reason)}</div></div>',
                 unsafe_allow_html=True)
-    if fixed_tp and ob.state == "READY":
+    if (fixed_tp or daily_ten) and ob.state == "READY" and not daily_done:
         st.warning("READY ด้านบนเป็นสัญญาณตาม TP เดิมเท่านั้น · "
-                   "TP 10 USDT ต้องผ่านค่าธรรมเนียมและ Net R:R แยก จึงจะใช้เป็นแผนทางเลือกได้")
+                   "TP ทางเลือกต้องผ่านค่าธรรมเนียมและ Net R:R แยก จึงจะใช้เป็นแผนได้")
     st.caption(f"Market Regime: {ob.market_regime} · Strategy: {ob.strategy} · "
                "Sideways จะเข้าใกล้ขอบกรอบเท่านั้น ไม่เข้าเมื่อราคากลางกรอบ")
     if ob.early_reversal_note:
@@ -384,12 +442,32 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    hour = snap.frames.get("1h")
+    if hour is not None and len(hour) >= 55:
+        hourly_adx = _adx(hour)
+        h = hour.iloc[-13:-1]
+        low_h, high_h = float(h.low.min()), float(h.high.max())
+        width_h = ((high_h - low_h) / ((low_h + high_h) / 2) * 100
+                   if low_h > 0 else 0)
+        is_range_h = (hourly_adx <= cfg.range_max_adx and
+                      cfg.range_min_width_pct <= width_h <= cfg.range_max_width_pct)
+        st.caption(f"กรอบ 1H จากแท่งที่ปิดแล้ว: {concise_price(low_h)}–{concise_price(high_h)}"
+                   f" · ADX 1H {hourly_adx:.1f} · "
+                   + ("SIDEWAYS WATCH" if is_range_h else "ยังไม่ยืนยัน Sideways 1H")
+                   + " · ไม่ใช่สัญญาณซื้อ")
     if fixed_tp:
         st.markdown("### 🎯 ตัวอย่าง TP ระยะราคา 10 USDT (ยังไม่ใช่สัญญาณเข้า)")
         sides = (["LONG"] if venue == "BINANCE_TH_SPOT" else
                  [ob.side] if ob.side in ("LONG", "SHORT") else ["LONG", "SHORT"])
         for example_side in sides:
             _fixed_tp_panel(fixed_tp_preview(snap, cfg, example_side))
+    if daily_ten and symbol == "PEPEUSDT" and not daily_done:
+        st.markdown("### 🎯 Daily 10 จุด · ราคาเฝ้าดู (ยังไม่ใช่สัญญาณเข้า)")
+        daily_sides = (["LONG"] if venue == "BINANCE_TH_SPOT" else
+                       [ob.side] if ob.side in ("LONG", "SHORT") else ["LONG", "SHORT"])
+        for daily_side in daily_sides:
+            _pepe_daily_ten_panel(pepe_daily_ten_preview(snap, cfg, daily_side),
+                                  daily_capital_thb)
     _support_resistance_panel(snap.frames["5m"], current_price=(snap.bid + snap.ask) / 2)
     st.markdown("### 🗺️ โซนเฝ้าราคา (สูงสุด 3 โซน · แสดงแม้ WAIT)")
     st.caption("เลือกเฉพาะแนวที่ยังไม่ถูกทะลุจาก EMA21 / จุดกลับตัว / แท่ง 5m ปิดแล้ว · "
@@ -412,7 +490,8 @@ def scalp_screen() -> None:
             for zone, decision in evaluated:
                 label = {"ZONE_READY": "🟢 ZONE READY · ผ่านเงื่อนไขจำลอง",
                          "WAIT_PRICE": "⚪ WAIT PRICE · รอเข้าโซน",
-                         "WAIT_CONFIRM": "🟡 IN ZONE · รอยืนยัน",
+                         "WAIT_CONFIRM": "🟡 CONFIRMING · รอยืนยัน 1m/5m",
+                         "MISSED": "🟠 MISSED · เด้งไกลแล้ว ไม่ไล่ราคา",
                          "RISK_BLOCK": "🔴 RISK BLOCK · งดเข้า",
                          "INVALIDATED": "🔴 โซนหลุด · งดเข้า",
                          "DATA_UNAVAILABLE": "⚠️ DATA UNAVAILABLE"}[decision.state]
@@ -449,6 +528,19 @@ def scalp_screen() -> None:
                         with st.expander("TP1/TP2 ของแผนเดิม (ยังคงอยู่)"):
                             _price_grid([("TP1 เดิม", decision.tp1),
                                          ("TP2 เดิม", decision.tp2)])
+                    elif daily_ten and symbol == "PEPEUSDT":
+                        if daily_done:
+                            st.warning("วันนี้ทำเครื่องหมายว่าปิดไม้แล้ว · ไม่เปิดแผน Daily ใหม่")
+                        else:
+                            _price_grid([("ENTRY ที่ยืนยัน", decision.entry),
+                                         ("STOP LOSS เดิม", decision.stop)])
+                            _pepe_daily_ten_panel(pepe_daily_ten_preview(
+                                snap, cfg, watch_side, entry=decision.entry,
+                                stop=decision.stop, qty=decision.qty,
+                                signal_ready=True), daily_capital_thb, approved_signal=True)
+                        with st.expander("TP1/TP2 ของแผนเดิม (ยังคงอยู่)"):
+                            _price_grid([("TP1 เดิม", decision.tp1),
+                                         ("TP2 เดิม", decision.tp2)])
                     else:
                         _price_grid([("ENTRY ล่าสุด", decision.entry), ("STOP LOSS", decision.stop),
                                      ("TP1 จำลอง", decision.tp1), ("TP2 จำลอง", decision.tp2)])
@@ -459,9 +551,12 @@ def scalp_screen() -> None:
                     st.caption("⚪ ยังไม่ถึงโซน · ระบบจะประเมินใหม่เมื่อข้อมูลรีเฟรช")
                 elif decision.state in ("RISK_BLOCK", "INVALIDATED"):
                     st.error(f"{label} · {decision.reason}")
+                elif decision.state == "MISSED":
+                    st.warning(f"{label} · {decision.reason}")
                 else:
                     st.warning(f"{label} · {decision.reason}")
-                if zone["state"] == "IN_ZONE":
+                if zone["state"] == "IN_ZONE" or (zone["state"] == "WATCH" and
+                                                      decision.state in ("ZONE_READY", "WAIT_CONFIRM")):
                     with st.expander(f"🔎 เหตุผลของ {zone['name']} {watch_side} · 15m / 5m / 1m",
                                      expanded=False):
                         for check_name, passed, explanation in decision.checks:
@@ -489,6 +584,15 @@ def scalp_screen() -> None:
             _fixed_tp_panel(fixed_tp_preview(
                 snap, cfg, ob.side, entry=ob.entry, stop=ob.stop,
                 qty=ob.qty, signal_ready=True), approved_signal=True)
+            with st.expander("TP1/TP2 ของแผนเดิม (ยังคงอยู่)"):
+                _price_grid([("TP1 เดิม", ob.tp1), ("TP2 เดิม", ob.tp2)])
+        elif (daily_ten and symbol == "PEPEUSDT" and not daily_done and
+              ob.state == "READY" and ob.side in ("LONG", "SHORT")):
+            _price_grid([("Entry Bid/Ask", ob.entry), ("Stop Loss เดิม", ob.stop)])
+            _pepe_daily_ten_panel(pepe_daily_ten_preview(
+                snap, cfg, ob.side, entry=ob.entry, stop=ob.stop,
+                qty=ob.qty, signal_ready=True), daily_capital_thb,
+                approved_signal=True)
             with st.expander("TP1/TP2 ของแผนเดิม (ยังคงอยู่)"):
                 _price_grid([("TP1 เดิม", ob.tp1), ("TP2 เดิม", ob.tp2)])
         else:
