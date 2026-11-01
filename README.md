@@ -1,4 +1,12 @@
-# Orbit Crypto Signal Lab v5.0 Ultimate — Mobile App + Spot + Futures + Paper Tracker
+# Orbit Crypto Signal Lab v5.9.4 — Mobile App + Spot + Futures + Paper Tracker
+
+## ล่าสุด: v5.9.4 — Spot Range Bounce Intelligence (1 พ.ย. 2026)
+
+- หน้า Spot เพิ่มโมดูล **Binance TH Spot Range Bounce** แยกขาดจาก `MTF BUY` เดิม (Binance Global Spot): แสดง `MTF WAIT` คู่กับ `NEAR SUPPORT` หรือ `REBOUND WATCH` ได้โดยไม่แก้ผล MTF
+- ใช้แท่ง **ปิดแล้ว** 1H ประเมินกรอบ Sideways + ADX, 15m ป้องกันแนวรับหลุด, 5m ทดสอบแนวรับพร้อม Volume, 1m Buy Flow ยืนยัน ก่อน `RANGE_READY`
+- คงค่าต้นทุน/ความเสี่ยงจาก `scalp_config.json` เดิม รวม Spread, Fee, Slippage, Stop Loss, Net R:R ถึง TP1, ขั้นต่ำปริมาณ Order Book และขนาดคำสั่งจำลอง; ไม่มีคำสั่งซื้อขายจริงหรือ Telegram ใหม่
+- หากราคาหลุดแนวรับ/แท่งยืนยันไม่ผ่าน/ข้อมูลขาด จะแสดง `RANGE_BROKEN`, `RISK_BLOCK` หรือ `DATA_UNAVAILABLE` แทนการขึ้น READY; `RANGE_READY` เป็น **PAPER ONLY**, ไม่ยืนยัน Win Rate
+- วิธีอัปเดตเฉพาะไฟล์ดู `UPGRADE_v5.9.4_TH.md`
 
 ## ล่าสุด: v5.9.3 — Signal Recovery (1 พ.ย. 2026)
 

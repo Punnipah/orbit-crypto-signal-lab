@@ -201,7 +201,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.9.3</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.9.4</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -377,6 +377,60 @@ def _scalp_live(venue: str, symbol: str, refresh_id: int):
     settings = read_scalp_settings(ROOT / "scalp_config.json")
     snap = fetch_snapshot(venue, symbol)
     return evaluate_scalp(snap, settings), snap, settings
+
+
+@st.cache_data(ttl=45, show_spinner=False)
+def _spot_range_live(symbol: str):
+    """Independent Binance TH Spot range research; leaves MTF BUY untouched."""
+    from scalp_engine import read_scalp_settings
+    from scalp_marketdata import fetch_snapshot
+    from spot_range_bounce import evaluate_spot_range
+
+    settings = read_scalp_settings(ROOT / "scalp_config.json")
+    snapshot = fetch_snapshot("BINANCE_TH_SPOT", symbol)
+    return evaluate_spot_range(snapshot, settings), snapshot
+
+
+def _spot_range_panel(symbol: str) -> None:
+    st.markdown("### 🟢 Orbit v5.9.4 · Spot Range Bounce Intelligence")
+    st.caption("โมดูล Binance TH Spot แยกจาก MTF BUY (Binance Global Spot) · ไม่เปลี่ยนสถานะ MTF")
+    try:
+        result, snapshot = _spot_range_live(symbol)
+    except (ValueError, RuntimeError, KeyError, TypeError, OSError, IndexError):
+        st.warning("RANGE DATA UNAVAILABLE · ดึงข้อมูล Binance TH Spot ไม่สำเร็จ จึงไม่แสดงสัญญาณ")
+        return
+    labels = {
+        "NO_RANGE": "NO RANGE · ไม่พบกรอบ Sideways ที่ผ่านเกณฑ์",
+        "RANGE_DETECTED": "RANGE DETECTED · พบกรอบแต่ยังไม่ใกล้แนวรับ",
+        "NEAR_SUPPORT": "NEAR SUPPORT · เฝ้ารอแท่งกลับตัว",
+        "REBOUND_WATCH": "REBOUND WATCH · ต้องรอ Buy Flow ยืนยัน",
+        "RANGE_READY": "RANGE READY · ผ่านเงื่อนไขจำลอง (ไม่ใช่คำสั่งซื้อ)",
+        "RANGE_BROKEN": "RANGE BROKEN · กรอบแนวรับใช้ไม่ได้แล้ว",
+        "RISK_BLOCK": "RISK BLOCK · ค่าความเสี่ยง/ต้นทุนไม่ผ่าน",
+        "DATA_UNAVAILABLE": "DATA UNAVAILABLE · ข้อมูลยังไม่ครบหรือเก่า",
+    }
+    message = f"**{labels.get(result.state, result.state)}** — {result.reason}"
+    if result.state == "RANGE_READY":
+        st.success(message)
+    elif result.state in {"RANGE_BROKEN", "RISK_BLOCK", "DATA_UNAVAILABLE"}:
+        st.warning(message)
+    else:
+        st.info(message)
+    if result.support is not None and result.resistance is not None:
+        a, b, c = st.columns(3)
+        a.metric("SUPPORT", concise_price(result.support))
+        b.metric("RESISTANCE", concise_price(result.resistance))
+        c.metric("ADX 1H", f"{result.adx_1h:.1f}" if result.adx_1h is not None else "—")
+        st.caption(f"โซนใกล้แนวรับถึง {concise_price(result.support_zone_high)} USDT · "
+                   "อ้างอิงแท่ง 1H ที่ปิดแล้ว")
+    if result.state == "RANGE_READY":
+        _price_grid([("RANGE ENTRY (ASK)", result.entry), ("STOP LOSS", result.stop),
+                     ("TP1 (MID-RANGE)", result.tp1), ("TP2", result.tp2)])
+        st.caption(f"Net R:R ที่ TP1 {result.net_rr:.2f} · "
+                   f"Risk ประมาณ {result.risk_usdt:.4f} USDT · "
+                   f"หมดอายุ {result.expires_at.astimezone().strftime('%H:%M:%S')} (ตามเวลาเครื่อง)")
+    st.caption(f"ข้อมูลจาก {snapshot.venue} · READ ONLY / PAPER ONLY · "
+               "MTF WAIT และ Range Watch แสดงพร้อมกันได้ โดยไม่ทดแทนคำแนะนำกัน")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1116,6 +1170,7 @@ def spot_screen(symbol: str, watch_token: str | None) -> None:
         st.caption("🔒 แผนที่ล็อกไว้ · จุดราคาเดิมไม่ขยับตามตลาด")
     else:
         st.caption("📍 แผน MTF สด · เปลี่ยนได้เมื่อมีแท่งเทียนใหม่")
+    _spot_range_panel(symbol)
     rally_text = {"BREAKOUT_WATCH": "🚀 ราคาเริ่มหนี Entry Zone",
                   "MISSED_ENTRY": "⚠️ ราคาไปไกลจาก Entry Zone",
                   "NEW_SETUP_CANDIDATE": "🔄 พบโอกาสพิจารณาแผนใหม่"}
