@@ -18,6 +18,8 @@ from scalp_fixed_tp import pepe_daily_ten_preview
 from scalp_marketdata import MarketDataError, fetch_snapshot, get_exchange_catalog
 from scalp_runner import VENUES
 from validation_history import GitHubValidationStore, merge_history
+from near_ready_tracker import near_candidates
+from near_ready_history import GitHubNearReadyStore, merge as merge_near
 
 
 ROOT = Path(__file__).resolve().parent
@@ -70,7 +72,7 @@ def observation_row(ob: ScalpObservation, snapshot=None, settings=None) -> dict:
     }
 
 
-def scan() -> list[dict]:
+def scan(*, near_sink: list[dict] | None = None) -> list[dict]:
     settings = read_scalp_settings(CONFIG)
     rows = []
     for venue, key in VENUES:
@@ -90,6 +92,13 @@ def scan() -> list[dict]:
                                           now=datetime.now(timezone.utc))
                 ob = evaluate_scalp(snapshot, settings, now=datetime.now(timezone.utc))
                 row = observation_row(ob, snapshot, settings)
+                if near_sink is not None:
+                    try:
+                        near_sink.extend(near_candidates(snapshot, settings, ob))
+                    except (ValueError, TypeError, KeyError, OverflowError, IndexError):
+                        # New optional diagnostics cannot suppress original
+                        # READY/WAIT observations or bypass any risk gate.
+                        print(f"{venue}/{sym}: optional near-ready evidence unavailable", flush=True)
             except (MarketDataError, ValueError, TypeError, KeyError, OverflowError) as exc:
                 ob = ScalpObservation(venue, sym, "DATA_UNAVAILABLE",
                                       f"{type(exc).__name__}: {str(exc)[:120]}",
@@ -101,11 +110,12 @@ def scan() -> list[dict]:
 
 
 def run(*, record: bool) -> int:
-    print("Orbit v5.9 Professional Validation · read-only PAPER ONLY", flush=True)
-    rows = scan()
+    print("Orbit v5.9.1 Professional Validation + Near Ready · PAPER ONLY", flush=True)
+    near: list[dict] = []
+    rows = scan(near_sink=near)
     available = sum(r["st"] != "DATA_UNAVAILABLE" for r in rows)
     print(f"Verified coverage: {available}/{len(rows)} · READY: "
-          f"{sum(r['st'] == 'READY' for r in rows)}", flush=True)
+          f"{sum(r['st'] == 'READY' for r in rows)} · NEAR READY (research): {len(near)}", flush=True)
     if not record:
         print("DRY RUN · no write, no alerts, no exchange orders", flush=True)
         return 0 if available else 2
@@ -129,6 +139,23 @@ def run(*, record: bool) -> int:
         store.save(updated)
     print(f"Recorded {count} unique observations / UTC day; "
           f"missing data stays missing; PAPER ONLY", flush=True)
+    # Independent secondary file on the same validation-history branch.
+    # Failure does not alter existing original validation records/READY.
+    daily_near = [r for r in near if datetime.fromtimestamp(r["t"] / 1000,
+                  timezone.utc).date() == day]
+    if daily_near:
+        try:
+            near_store = GitHubNearReadyStore(os.getenv("GITHUB_REPOSITORY", ""),
+                                              os.getenv("GITHUB_TOKEN", ""),
+                                              os.getenv("GITHUB_SHA", ""))
+            previous = near_store.load(day)
+            near_state, near_count = merge_near(previous, daily_near, now)
+            if near_count:
+                near_store.save(near_state)
+            print(f"Recorded {near_count} NEAR READY observations; watch only", flush=True)
+        except (DeliveryError, ValueError, RuntimeError) as exc:
+            print(f"Optional NEAR READY journal failed: {type(exc).__name__}: "
+                  f"{str(exc)[:130]}", file=sys.stderr, flush=True)
     return 0
 
 

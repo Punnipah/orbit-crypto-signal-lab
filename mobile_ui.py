@@ -201,7 +201,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.9</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.9.2</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -391,9 +391,114 @@ def _validation_history_public(days: int):
     return fetch_public_history(days=days)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _near_history_public(days: int):
+    from near_ready_history import fetch_public
+    return fetch_public(days=days)
+
+
+def _near_live_panel(snap, cfg, ob) -> None:
+    """Research-only watch; NEVER promote an engine WAIT to trade READY."""
+    try:
+        from near_ready_tracker import near_candidates
+        events = near_candidates(snap, cfg, ob)
+        if not events:
+            return
+        st.markdown("### 🟡 NEAR READY · ใกล้ผ่านเกณฑ์ (ยังเข้าไม่ได้)")
+        for event in events:
+            st.warning(f"{event['sd']} · ผ่าน 4/5 เงื่อนไขเบื้องต้น · "
+                       f"ยังขาด **{event['fail']}** · "
+                       "รอยืนยันแท่ง 1m/5m และตรวจ Spread/Stop/ค่าธรรมเนียม/Net R:R "
+                       "อีกครั้งก่อนอนุมัติ READY")
+        st.caption("NEAR READY เป็นการเฝ้าดูเท่านั้น ไม่สร้าง Entry/TP/SL ใหม่ "
+                   "ไม่ยกเลิก RISK BLOCK และไม่ใช่สัญญาณซื้อขาย")
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError):
+        st.caption("Near Ready ยังประเมินไม่ได้จากข้อมูลรอบนี้ · ไม่ส่งผลต่อสัญญาณหลัก")
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _spot_research_snapshot(symbol: str):
+    """Explicit opt-in research source; NEVER handed to a Futures engine."""
+    from scalp_marketdata import fetch_snapshot
+    return fetch_snapshot("BINANCE_TH_SPOT", symbol)
+
+
+@st.cache_data(ttl=240, show_spinner=False)
+def _health_catalog_probe(venue: str, symbol: str):
+    from futures_data_health import probe_catalog
+    return probe_catalog(venue, symbol)
+
+
+def _short_watch_panel(snap, *, substituted_source: bool = False) -> None:
+    """This research panel never returns or changes an approved signal."""
+    from short_opportunity import evaluate_short_watch
+    watch = evaluate_short_watch(snap)
+    st.markdown("### 📉 SHORT Opportunity Watch · เฝ้าดูแรงขาย")
+    market = "Spot · Binance TH" if snap.venue == "BINANCE_TH_SPOT" else snap.venue
+    st.caption(f"แหล่งข้อมูลจริง: {market} · {snap.symbol} · "
+               f"ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. ไทย · "
+               "ใช้แท่งที่ปิดแล้ว; ไม่เปิด SHORT ใน Spot")
+    if substituted_source:
+        st.error("⚠️ นี่คือ Spot Research เพื่ออธิบายทิศทางเท่านั้น "
+                 "ห้ามใช้ราคา/Volume/Spread นี้แทนข้อมูล Futures ที่ถูกบล็อก "
+                 "และห้ามยกระดับเป็น Futures READY")
+    if watch.state == "SHORT_WATCH":
+        st.warning("🟠 SHORT WATCH · " + watch.reason)
+    elif watch.state == "EARLY_WATCH":
+        st.info("🟡 EARLY SHORT WATCH · " + watch.reason)
+    elif watch.state == "INSUFFICIENT_DATA":
+        st.warning("⚪ SHORT DATA INCOMPLETE · " + watch.reason)
+    else:
+        st.info("⚪ NO SHORT SETUP · " + watch.reason)
+    if watch.checks:
+        with st.expander("🔍 หลักฐานฝั่ง Short จาก 1H/15m/5m/1m"):
+            for label, ok, note in watch.checks:
+                st.markdown(f"{'✅' if ok else '⚪'} **{label}** — {note}")
+            st.caption("จำนวนข้อที่ผ่านไม่ใช่เปอร์เซ็นต์ชนะ "
+                       "· ไม่ได้ทดสอบค่า Fee, Stop, Depth หรือ Net R:R ในส่วนเฝ้าดูนี้")
+    st.caption("SHORT WATCH เป็นเพียงการสังเกตตลาด ไม่ใช่ Entry, Stop Loss, Take Profit "
+               "หรือคำสั่ง Futures · READY เดิมต้องผ่านกฎครบแยกต่างหาก")
+
+
+def _data_health_panel(venue: str, symbol: str, *, snap=None, error: str | None = None) -> None:
+    """Explain upstream venue limitations without creating any trading route."""
+    from futures_data_health import LABELS, classify
+    health = classify(venue, symbol, snapshot=snap, error=error)
+    with st.expander("🩺 Futures Data Health · ตรวจว่าตลาดพร้อมหรือถูกบล็อก", expanded=bool(error)):
+        st.markdown(f"**ตลาดที่เลือก:** {LABELS[venue]} · `{symbol}`")
+        label = f"{health.state} · {health.detail}"
+        if health.state in ("ACCESS_BLOCKED", "DATA_UNAVAILABLE", "STALE_DATA"):
+            st.error(label)
+        elif health.state in ("RATE_LIMITED", "NETWORK_ERROR", "SYMBOL_UNAVAILABLE", "WATCH_ONLY"):
+            st.warning(label)
+        else:
+            st.info(label)
+        st.caption("API ทำงานได้ ไม่ได้แปลว่ามีสัญญาณเข้าซื้อขาย · "
+                   "ห้ามเอาข้อมูลอีกตลาดมาสร้าง Futures READY")
+        if st.button("🔎 ตรวจ Exchange Catalog ทั้ง 3 ตลาด (เฉพาะการเข้าถึง)",
+                     key=f"data_health_probe_{venue}_{symbol}"):
+            with st.spinner("ตรวจ public exchangeInfo เท่านั้น..."):
+                for source in LABELS:
+                    status = _health_catalog_probe(source, symbol)
+                    st.markdown(f"- **{LABELS[source]}:** `{status.state}` — {status.detail}")
+            st.caption("ตรวจเฉพาะรายชื่อคู่เหรียญและข้อกำหนดตลาด ไม่ได้ยืนยัน "
+                       "แท่ง Futures/Mark/Funding/Order Book/Flow")
+    if error and venue != "BINANCE_TH_SPOT":
+        show = st.checkbox("📉 ดู SHORT Watch จาก Binance TH Spot (เพื่อศึกษาทิศทางเท่านั้น)",
+                           key=f"spot_short_research_{venue}_{symbol}")
+        if show:
+            from scalp_marketdata import MarketDataError
+            try:
+                with st.spinner("กำลังโหลดข้อมูล Spot แยกเพื่อการศึกษา..."):
+                    spot = _spot_research_snapshot(symbol)
+                _short_watch_panel(spot, substituted_source=True)
+            except (MarketDataError, ValueError, TypeError, KeyError) as exc:
+                st.warning("Spot research ก็ยังไม่พร้อม: " + str(exc)[:125])
+
+
 def _validation_panel(venue: str, symbol: str) -> None:
     """Purely explanatory paper dashboard, not an input to live entry gates."""
-    with st.expander("🧪 Orbit v5.9 · Professional Validation / Paper Journal"):
+    with st.expander("🧪 Orbit v5.9.1 · Professional Validation / Near Ready Tracker"):
         st.caption("สแกนอิสระทุก ~5 นาทีจาก GitHub Actions · เก็บสถานะ READY / WAIT / "
                    "WATCH / RISK BLOCK / DATA UNAVAILABLE · ไม่ใช่คำสั่งซื้อขายจริง "
                    "และอาจไม่ตรงรอบกับ Telegram ทุกครั้ง")
@@ -490,6 +595,46 @@ def _validation_panel(venue: str, symbol: str) -> None:
                 st.dataframe(report.tail(30).iloc[::-1], hide_index=True, width="stretch")
             else:
                 st.caption("ยังไม่มีเหตุการณ์ที่มีทิศทางและแท่งปิดครบ 30 นาที · ไม่เดาโอกาสที่พลาด")
+
+            st.markdown("**🟡 Near Ready → Missed Opportunity Tracker (บันทึกตั้งแต่ v5.9.1)**")
+            try:
+                from near_ready_tracker import forward_excursions
+                near_events = [r for r in _near_history_public(days)["rows"]
+                               if r["v"] == venue and r["s"] == symbol]
+                if near_events:
+                    followups = forward_excursions(near_events, all_rows, venue, symbol)
+                    complete = [r for r in followups if r["state"] == "OBSERVED_30M"]
+                    pending = len(followups) - len(complete)
+                    aa, bb = st.columns(2)
+                    with aa:
+                        st.metric("Near Ready (รอบสแกน)", len(near_events))
+                        st.metric("หน้าต่าง 30m ที่ข้อมูลครบ", len(complete))
+                    with bb:
+                        st.metric("ข้อมูลยังไม่ครบ/รอย้อนหลัง", pending)
+                        st.metric("ราคาเคยไปทางที่เฝ้า ≥0.5%",
+                                  sum(bool(r["reached_0_5pct"]) for r in complete))
+                    if symbol == "PEPEUSDT":
+                        st.metric("PEPE ราคาเคยไปทางที่เฝ้าถึง 10 จุด (Gross)",
+                                  sum(bool(r["reached_10_points"]) for r in complete))
+                    if followups:
+                        view = pd.DataFrame(followups)
+                        view["เวลาไทย"] = pd.to_datetime(view["t"], unit="ms", utc=True).dt.tz_convert(BKK)
+                        st.dataframe(view[["เวลาไทย", "side", "failed_gate", "state",
+                                           "favorable_pct", "adverse_pct", "reached_10_points"]]
+                                     .tail(40).iloc[::-1], hide_index=True, width="stretch")
+                        st.download_button("⬇️ ดาวน์โหลด Near Ready Follow-up CSV",
+                                           view.to_csv(index=False).encode("utf-8-sig"),
+                                           f"Orbit_V591_Near_{venue}_{symbol}.csv", mime="text/csv",
+                                           key=f"near_csv_{venue}_{symbol}")
+                    st.caption("นับไม่ซ้ำหนึ่งเหตุการณ์ต่อฝั่งต่อช่วง 30 นาที · "
+                               "ใช้แต่แท่ง 1m ที่ปิดหลังสแกนจริงครบ 30 นาที "
+                               "· favorable/adverse เป็นการแกว่งของราคา ไม่ได้จำลองออร์เดอร์ "
+                               "· ไม่หักค่าธรรมเนียมและไม่ใช่กำไรที่พลาด")
+                else:
+                    st.caption("ยังไม่มี Near Ready ที่บันทึกโดย Workflow v5.9.1 "
+                               "· ไม่ประเมินย้อนหลังโดยเดาจากรูปกราฟ")
+            except (ValueError, TypeError, KeyError, RuntimeError, OSError) as exc:
+                st.caption("Near Ready History ยังไม่พร้อม: " + str(exc)[:115])
 
             st.markdown("**Walk-Forward: รายงานช่วงเวลาต่อเนื่อง**")
             windows = walk_forward_report(outcomes)
@@ -626,7 +771,7 @@ def scalp_screen() -> None:
 
     from scalp_fixed_tp import fixed_tp_preview, pepe_daily_ten_preview
 
-    st.markdown("## 🎯 Scalp Signal v5.9 · PROFESSIONAL VALIDATION + WHALE + RANGE SCALP")
+    st.markdown("## 🎯 Scalp Signal v5.9.2 · SHORT WATCH + DATA HEALTH + NEAR READY")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -680,6 +825,7 @@ def scalp_screen() -> None:
         if venue == "BINANCE_GLOBAL_USDM":
             st.warning("Binance Global Futures อาจบล็อกเครือข่ายด้วย HTTP 451/403 · "
                        "ระบบจะไม่เอาราคา Binance TH Spot หรือ Kraken มาสร้าง LONG/SHORT")
+        _data_health_panel(venue, symbol, error=str(exc))
         _validation_panel(venue, symbol)
         return
     colors = {"READY": "good", "WATCH": "warning", "EXIT_WATCH": "warning",
@@ -711,6 +857,8 @@ def scalp_screen() -> None:
                 f"**Ask:** `{concise_price(snap.ask)}` · **Spread:** `{snap.spread_bps:.1f} bps`")
     st.caption(f"อ้างอิงข้อมูล ณ {snap.checked_at.astimezone(BKK):%d/%m/%Y %H:%M:%S} น. (ไทย) "
                "· แท่ง 1m/5m/15m ปิดจริง · Bid/Ask อาจเปลี่ยนทันที")
+    _data_health_panel(venue, symbol, snap=snap)
+    _short_watch_panel(snap)
     hour = snap.frames.get("1h")
     if hour is not None and len(hour) >= 55:
         hourly_adx = _adx(hour)
@@ -724,6 +872,7 @@ def scalp_screen() -> None:
                    f" · ADX 1H {hourly_adx:.1f} · "
                    + ("SIDEWAYS WATCH" if is_range_h else "ยังไม่ยืนยัน Sideways 1H")
                    + " · ไม่ใช่สัญญาณซื้อ")
+    _near_live_panel(snap, cfg, ob)
     _whale_panel(snap)
     _validation_panel(venue, symbol)
     if fixed_tp:
