@@ -1,0 +1,50 @@
+name: Orbit v5.9 Professional Validation (Paper Evidence Only)
+
+on:
+  schedule:
+    # Best-effort 5-minute observations; GitHub may delay or skip runs.
+    # Independent of existing Scalp Telegram and Whale jobs.
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Dry-run without writes first; record logs real public observations"
+        required: true
+        type: choice
+        options:
+          - dry_run
+          - record
+        default: dry_run
+
+permissions:
+  contents: write # This runner writes ONLY orbit-validation-history branch.
+
+concurrency:
+  group: orbit-professional-validation-v59
+  cancel-in-progress: false
+
+jobs:
+  journal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - name: Checkout existing Orbit
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: monitor_requirements.txt
+      - name: Public data dependencies (unchanged)
+        run: python -m pip install -r monitor_requirements.txt
+      - name: Validate existing PAPER ONLY config
+        run: python -m scalp_runner --validate-config
+      - name: Read-only validation dry-run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'dry_run' }}
+        run: python -m validation_runner --dry-run
+      - name: Collect genuine evidence to independent UTC daily archive
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'record' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m validation_runner --record
