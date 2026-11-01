@@ -171,7 +171,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.8.4</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.9</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -349,6 +349,244 @@ def _scalp_live(venue: str, symbol: str, refresh_id: int):
     return evaluate_scalp(snap, settings), snap, settings
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _whale_history_public(days: int):
+    from whale_history import fetch_public_history
+    return fetch_public_history(days=days)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _validation_history_public(days: int):
+    from validation_history import fetch_public_history
+    return fetch_public_history(days=days)
+
+
+def _validation_panel(venue: str, symbol: str) -> None:
+    """Purely explanatory paper dashboard, not an input to live entry gates."""
+    with st.expander("🧪 Orbit v5.9 · Professional Validation / Paper Journal"):
+        st.caption("สแกนอิสระทุก ~5 นาทีจาก GitHub Actions · เก็บสถานะ READY / WAIT / "
+                   "WATCH / RISK BLOCK / DATA UNAVAILABLE · ไม่ใช่คำสั่งซื้อขายจริง "
+                   "และอาจไม่ตรงรอบกับ Telegram ทุกครั้ง")
+        show = st.checkbox("📊 โหลดประวัติการตรวจสัญญาณ", value=False,
+                           key=f"validation_show_{venue}_{symbol}")
+        if not show:
+            return
+        days = st.selectbox("ช่วงข้อมูลที่เก็บได้จริง", [1, 7, 30], index=1,
+                            format_func=lambda x: f"{x} วัน",
+                            key=f"validation_days_{venue}_{symbol}")
+        try:
+            from validation_logic import (replay_all, missed_opportunities,
+                                          performance, walk_forward_report)
+            all_rows = _validation_history_public(days)["rows"]
+            records = [r for r in all_rows if r["v"] == venue and r["s"] == symbol]
+            if not records:
+                st.info("ยังไม่มีบันทึกของตลาด/คู่เหรียญนี้ โปรดตรวจ Workflow Validation")
+                return
+            recorded = len(records)
+            valid = sum(r["st"] != "DATA_UNAVAILABLE" for r in records)
+            ready = sum(r["st"] == "READY" for r in records)
+            bucket = [r["t"] // 300_000 for r in records]
+            observed_span = max(bucket) - min(bucket) + 1
+            captured = 100 * recorded / observed_span if observed_span else 0
+            left, right = st.columns(2)
+            with left:
+                st.metric("รอบบันทึก", str(recorded))
+                st.metric("แหล่งข้อมูลใช้ได้", f"{valid}/{recorded}")
+            with right:
+                st.metric("READY ที่บันทึก (อาจซ้ำ Setup)", str(ready))
+                st.metric("Coverage ในช่วงที่มีบันทึก", f"{captured:.1f}%")
+            last = datetime.fromtimestamp(max(r["t"] for r in records) / 1000,
+                                          timezone.utc).astimezone(BKK)
+            st.caption(f"บันทึกล่าสุด {last:%d/%m/%Y %H:%M:%S} (ไทย) · "
+                       "Coverage นับช่วงระหว่างบันทึกแรกกับล่าสุด ไม่ใช่รับประกัน 24 ชั่วโมง")
+
+            target_options = ["TP1 เดิม", "TP2 เดิม"]
+            if symbol == "PEPEUSDT":
+                target_options.append("PEPE 10 จุด (ต้องผ่าน R:R เดิม)")
+            selected = st.selectbox("สมมติฐานเป้าปิดเต็มไม้สำหรับ Paper Replay",
+                                    target_options, key=f"validation_tp_{venue}_{symbol}")
+            target = ("tp10" if selected.startswith("PEPE") else
+                      "tp2" if selected.startswith("TP2") else "tp1")
+            outcomes = replay_all(all_rows, venue, symbol, target)
+            stats = performance(outcomes)
+            st.markdown("**ผล Paper Replay หลังประมาณค่า Fee / Slippage / Spread**")
+            a, b = st.columns(2)
+            with a:
+                st.metric("ผลจำลองที่ปิดแล้ว", f"{stats['n']} ไม้")
+                st.metric("Win Rate จำลอง", (f"{stats['win_rate'] * 100:.1f}%"
+                                                 if stats["win_rate"] is not None else "ข้อมูลยังไม่พอ"))
+            with b:
+                st.metric("Net ผลรวมจำลอง (USDT)", f"{stats['net_usdt']:+,.2f}")
+                st.metric("Expectancy ต่อไม้ (R)", (f"{stats['expectancy_r']:+.2f}R"
+                                                   if stats["expectancy_r"] is not None else "ข้อมูลยังไม่พอ"))
+            c, d = st.columns(2)
+            with c:
+                st.metric("Profit Factor จำลอง", (f"{stats['profit_factor']:.2f}"
+                                                  if stats["profit_factor"] is not None else "ยังประเมินไม่ได้"))
+            with d:
+                st.metric("Max Drawdown จำลอง", (f"{stats['max_drawdown_usdt']:,.2f} USDT"
+                                                  if stats["max_drawdown_usdt"] is not None else "ยังประเมินไม่ได้"))
+            st.caption("การเข้าใช้ราคาเปิดแท่ง 1m ถัดไป (ต้องห่างแผนไม่เกิน 0.3%) "
+                       "· คิดต้นทุนสองฝั่ง · หาก SL และ TP ถูกแตะในแท่งเดียวกันให้ SL ก่อน "
+                       "· ไม่มีข้อมูลแท่งครบจะไม่นับเป็นไม้ชนะ/แพ้ · ไม่ใช่ผลจากบัญชีจริง")
+            if outcomes:
+                detail = pd.DataFrame(outcomes).sort_values("t").copy()
+                detail["เวลาไทย"] = pd.to_datetime(detail["t"], unit="ms", utc=True).dt.tz_convert(BKK)
+                finished = detail.loc[detail["net_usdt"].notna()].copy()
+                if len(finished):
+                    finished["สะสม USDT"] = finished["net_usdt"].cumsum()
+                    st.line_chart(finished.set_index("เวลาไทย")[["สะสม USDT"]], height=190)
+                view = detail[["เวลาไทย", "side", "state", "entry", "exit", "net_usdt",
+                               "net_r", "mfe_pct", "mae_pct", "ambiguous_stop_first"]].tail(50)
+                view.columns = ["เวลาไทย", "ฝั่ง", "ผลจำลอง", "Entry", "Exit", "Net USDT",
+                                "Net R", "MFE %", "MAE %", "SL/TP แตะพร้อมกัน"]
+                st.dataframe(view.iloc[::-1], hide_index=True, width="stretch")
+                st.download_button("⬇️ ดาวน์โหลด Paper Results CSV",
+                                   detail.to_csv(index=False).encode("utf-8-sig"),
+                                   f"Orbit_V59_Paper_{venue}_{symbol}.csv",
+                                   mime="text/csv", key=f"validation_csv_{venue}_{symbol}")
+            else:
+                st.info("ยังไม่มีสัญญาณ READY จากรอบที่บันทึกได้ · ไม่สร้างผลจำลองขึ้นมา")
+
+            st.markdown("**Missed Opportunity Watch (ไม่ใช่กำไรที่พลาดจริง)**")
+            missed = missed_opportunities(all_rows, venue, symbol)
+            if missed:
+                report = pd.DataFrame(missed)
+                st.caption(f"มี {len(report)} เหตุการณ์ที่มีทิศทางและข้อมูลอนาคตครบ 30 นาที "
+                           "· เป็นเพียงราคาที่เคลื่อนไหว ไม่ได้ยืนยันว่าเข้าได้หรือทำกำไร")
+                if symbol == "PEPEUSDT":
+                    st.metric("ราคาเคยไปถึงระยะ 10 จุด หลัง WAIT/WATCH/BLOCK",
+                              str(int(report["reached_10_points"].fillna(False).sum())))
+                st.dataframe(report.tail(30).iloc[::-1], hide_index=True, width="stretch")
+            else:
+                st.caption("ยังไม่มีเหตุการณ์ที่มีทิศทางและแท่งปิดครบ 30 นาที · ไม่เดาโอกาสที่พลาด")
+
+            st.markdown("**Walk-Forward: รายงานช่วงเวลาต่อเนื่อง**")
+            windows = walk_forward_report(outcomes)
+            if windows:
+                st.dataframe(pd.DataFrame(windows), hide_index=True, width="stretch")
+                st.caption("เปรียบเทียบช่วง Train 7 วัน กับช่วงถัดไป 7 วันตามลำดับเวลา "
+                           "· ไม่มีการปรับโมเดลย้อนหลัง · ตัวอย่างน้อยยังสรุปความสามารถทำกำไรไม่ได้")
+            else:
+                st.caption("ต้องสะสมข้อมูลและผลที่ปิดครบอย่างน้อย 14 วันจึงเริ่มทำรายงานตามเวลาได้")
+            counts = pd.Series([r["why"] for r in records if r["st"] != "READY"])
+            if not counts.empty:
+                st.markdown("**สาเหตุ WAIT / BLOCK ที่พบบ่อย**")
+                st.dataframe(counts.value_counts().head(8).rename_axis("เหตุผล").reset_index(name="ครั้ง"),
+                             hide_index=True, width="stretch")
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError) as exc:
+            st.warning("Professional Validation ยังโหลด/ประเมินไม่ได้: " + str(exc)[:130])
+
+
+def _whale_panel(snap) -> None:
+    """Independent research overlay: NEVER passed to the BUY/SHORT risk engine."""
+    from whale_footprint import analyze_footprint, fetch_large_prints
+    from whale_history import history_for
+
+    st.markdown("### 🐋 Whale Footprint · ร่องรอยแรงซื้อขาย")
+    try:
+        observation = analyze_footprint(snap)
+    except (ValueError, KeyError, TypeError) as exc:
+        st.warning(f"Whale Footprint ยังประเมินไม่ได้: {str(exc)[:90]}")
+        st.caption("ข้อมูลส่วนนี้ไม่มีผลต่อสัญญาณและความเสี่ยงของ Scalp")
+        return
+
+    labels = {
+        "FLOW_UNAVAILABLE": "⚪ FLOW UNAVAILABLE · ยังไม่มีข้อมูลยืนยัน",
+        "POSSIBLE_BID_ABSORPTION": "🟢 POSSIBLE BID ABSORPTION · อาจมีแรงรับ",
+        "POSSIBLE_ASK_ABSORPTION": "🔴 POSSIBLE ASK ABSORPTION · อาจมีแรงขาย",
+        "BUY_PRESSURE": "🟢 BUY PRESSURE · แรงซื้อเชิงรุก",
+        "SELL_PRESSURE": "🔴 SELL PRESSURE · แรงขายเชิงรุก",
+        "MIXED": "🟡 MIXED FLOW · ยังไม่ชัด",
+    }
+    st.info(labels[observation.classification] + " · " + observation.explanation)
+    left, right = st.columns(2)
+    with left:
+        st.metric("Taker Buy 5m" if snap.venue != "BITGET_USDT_FUTURES" else "Flow 5m",
+                  (f"{observation.taker_buy_share_5m * 100:.1f}%"
+                   if observation.taker_buy_share_5m is not None else "ไม่พร้อม"))
+        st.metric("Volume 5m เทียบฐาน 40 นาที", f"{observation.volume_ratio_5m:.2f}x")
+    with right:
+        st.metric("CVD Proxy 5m", (f"{observation.delta_5m_usdt:+,.1f} USDT"
+                                    if observation.delta_5m_usdt is not None else "ไม่พร้อม"))
+        st.metric("Bid Depth Share · 20 ระดับ", f"{observation.bid_depth_share * 100:.1f}%")
+    st.caption("ใช้แท่ง 1m ที่ปิดแล้ว 5 แท่ง + Order Book จากตลาดที่เลือกเท่านั้น · "
+               "Delta เป็นตัวแทนแรงซื้อขายเชิงรุก ไม่ใช่ตัวตนหรือเจตนาของวาฬ · "
+               "Order Book ยกเลิกคำสั่งได้")
+    st.warning("ข้อมูลวาฬเป็นเพียงหลักฐานประกอบ **ไม่ใช่ปุ่ม BUY/SHORT** · "
+               "ไม่ยกเลิกเงื่อนไข Volume 1m/5m, Spread, Stop Loss, Fee, Depth, Net R:R "
+               "หรือ RISK BLOCK ของ Orbit v5.8.4")
+
+    with st.expander("🔎 ตรวจธุรกรรมก้อนใหญ่ของตลาดนี้ (ข้อมูลสดแยก)"):
+        key = f"whale_prints_{snap.venue}_{snap.symbol}"
+        if st.button("🔄 โหลด Aggregate Trades / Public Fills", key=key + "_button"):
+            try:
+                value = fetch_large_prints(snap)
+                st.session_state[key] = value
+            except (ValueError, TypeError, RuntimeError) as exc:
+                st.session_state.pop(key, None)
+                st.warning(f"ธุรกรรมก้อนใหญ่ไม่พร้อม: {str(exc)[:100]}")
+        value = st.session_state.get(key)
+        if value is not None:
+            age = (datetime.now(timezone.utc) - value.latest_at).total_seconds()
+            if 0 <= age <= 120:
+                st.caption(f"แหล่งข้อมูล: {value.source} · ล่าสุด {age:.0f} วินาที · "
+                           f"ตัวอย่าง {value.sample_size} รายการ ช่วง {value.window_seconds:.0f} วินาที")
+                a, b = st.columns(2)
+                with a:
+                    st.metric("รายการใหญ่ฝั่งซื้อ", f"{value.buy_count} รายการ")
+                    st.caption(f"มูลค่า {value.buy_usdt:,.0f} USDT")
+                with b:
+                    st.metric("รายการใหญ่ฝั่งขาย", f"{value.sell_count} รายการ")
+                    st.caption(f"มูลค่า {value.sell_usdt:,.0f} USDT")
+                st.caption(f"นิยามรายการใหญ่ = สูงกว่า 5 เท่าของค่ามัธยฐานในตัวอย่าง "
+                           f"และไม่น้อยกว่า {value.threshold_usdt:,.0f} USDT · "
+                           "ตัวอย่างล่าสุดอาจครอบคลุมเวลาไม่ครบ 5 นาที")
+            else:
+                st.info("ตัวอย่างธุรกรรมเก่าแล้ว · กดโหลดใหม่")
+
+    with st.expander("📚 ประวัติ Whale Footprint · เก็บจริงสูงสุด 30 วัน"):
+        show = st.checkbox("โหลดประวัติจาก GitHub (แยกจากแอปและ Telegram)",
+                           key=f"whale_history_{snap.venue}_{snap.symbol}")
+        if show:
+            days = st.selectbox("ดูย้อนหลัง", [1, 7, 30], index=1,
+                                format_func=lambda x: f"{x} วัน",
+                                key=f"whale_days_{snap.venue}_{snap.symbol}")
+            try:
+                data = history_for(_whale_history_public(days), snap.venue, snap.symbol)
+            except (ValueError, TypeError, RuntimeError) as exc:
+                st.info(str(exc)[:130])
+                data = []
+            if data:
+                table = pd.DataFrame(data).sort_values("t").copy()
+                table["เวลาไทย"] = pd.to_datetime(table["t"], unit="ms", utc=True).dt.tz_convert(BKK)
+                # CVD integrates distinct 5m intervals, not repeated Streamlit refreshes.
+                table["CVD สะสม (USDT)"] = table["d"].fillna(0).cumsum()
+                latest = table.iloc[-1]
+                st.caption(f"บันทึกจริง {len(table)} ช่วง · ล่าสุด "
+                           f"{latest['เวลาไทย']:%d/%m/%Y %H:%M} (ไทย) · "
+                           "เริ่มนับเมื่อ Workflow ทำงาน ไม่มีข้อมูลสมมติย้อนหลัง")
+                st.line_chart(table.set_index("เวลาไทย")[["CVD สะสม (USDT)"]],
+                              height=220)
+                readable = table[["เวลาไทย", "p", "d", "b", "x", "g"]].tail(40).copy()
+                readable.columns = ["เวลาไทย", "ราคา", "Delta USDT", "Buy Share",
+                                    "Volume x", "ข้อสังเกต"]
+                st.dataframe(readable.iloc[::-1], hide_index=True, width="stretch")
+                if st.checkbox("📊 แสดงธุรกรรมก้อนใหญ่ย้อนหลัง (เฉพาะช่วงที่ API ส่งข้อมูล)",
+                               key=f"whale_large_history_{snap.venue}_{snap.symbol}"):
+                    large = table[["เวลาไทย", "lb", "ls"]].tail(40).copy()
+                    large.columns = ["เวลาไทย", "ฝั่งซื้อ USDT", "ฝั่งขาย USDT"]
+                    st.dataframe(large.iloc[::-1], hide_index=True, width="stretch")
+                    st.caption("ช่องว่างหมายถึง API ไม่มีข้อมูลที่ตรวจสอบได้ ไม่ใช่ไม่มีคนซื้อขาย")
+                st.download_button("⬇️ ดาวน์โหลดประวัติ CSV", readable.to_csv(index=False).encode("utf-8-sig"),
+                                   f"Orbit_Whale_{snap.venue}_{snap.symbol}.csv",
+                                   mime="text/csv", key=f"whale_csv_{snap.venue}_{snap.symbol}")
+            else:
+                st.caption("ยังไม่มีประวัติสำหรับคู่เหรียญ/ตลาดนี้ หรือยังไม่เปิด Workflow เก็บข้อมูล")
+        st.caption("ข้อมูลเป็นภาพรวมตลาดและธุรกรรมสาธารณะ · ไม่ใช่ประวัติผลกำไร "
+                   "ไม่รวมข้อมูลนอกตลาดที่เลือก และยังไม่ยืนยันความแม่นยำเชิงสถิติ")
+
+
 @st.fragment(run_every="60s")
 def scalp_screen() -> None:
     """On-page live read-only scan; stops when the Streamlit session closes."""
@@ -358,7 +596,7 @@ def scalp_screen() -> None:
 
     from scalp_fixed_tp import fixed_tp_preview, pepe_daily_ten_preview
 
-    st.markdown("## 🎯 Scalp Signal v5.8.4 · RANGE SCALP 10 POINTS")
+    st.markdown("## 🎯 Scalp Signal v5.9 · PROFESSIONAL VALIDATION + WHALE + RANGE SCALP")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -412,6 +650,7 @@ def scalp_screen() -> None:
         if venue == "BINANCE_GLOBAL_USDM":
             st.warning("Binance Global Futures อาจบล็อกเครือข่ายด้วย HTTP 451/403 · "
                        "ระบบจะไม่เอาราคา Binance TH Spot หรือ Kraken มาสร้าง LONG/SHORT")
+        _validation_panel(venue, symbol)
         return
     colors = {"READY": "good", "WATCH": "warning", "EXIT_WATCH": "warning",
               "RISK_BLOCK": "danger"}
@@ -455,6 +694,8 @@ def scalp_screen() -> None:
                    f" · ADX 1H {hourly_adx:.1f} · "
                    + ("SIDEWAYS WATCH" if is_range_h else "ยังไม่ยืนยัน Sideways 1H")
                    + " · ไม่ใช่สัญญาณซื้อ")
+    _whale_panel(snap)
+    _validation_panel(venue, symbol)
     if fixed_tp:
         st.markdown("### 🎯 ตัวอย่าง TP ระยะราคา 10 USDT (ยังไม่ใช่สัญญาณเข้า)")
         sides = (["LONG"] if venue == "BINANCE_TH_SPOT" else
