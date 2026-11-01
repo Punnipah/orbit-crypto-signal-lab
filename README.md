@@ -1,5 +1,16 @@
 # Orbit Crypto Signal Lab v5.0 Ultimate — Mobile App + Spot + Futures + Paper Tracker
 
+## ล่าสุด: v5.9.3 — Signal Recovery (1 พ.ย. 2026)
+
+- เพิ่ม `PULLBACK_REJECTION` สำหรับเทรนด์ 15m ที่ชัดเจน: แท่ง 5m ปิดปฏิเสธการย่อ/เด้งเข้า EMA9 แล้วรอแท่ง 1m ที่ **ปิดแล้ว** พร้อม Volume + Buy/Sell Flow จริงก่อนแสดง Scalp `READY`. ยังต้องผ่าน Spread, Stop Loss, Minimum Net R:R, ค่า Fee/Slippage, Depth และเพดานความเสี่ยงเดิมทุกข้อ
+- Futures Bitget ลองดึงข้อมูลซื้อขายย้อนหลังสาธารณะจาก `/api/v2/mix/market/fills-history` เมื่อ 100 ธุรกรรมล่าสุดไม่พอตรวจ Volume/Flow ของแท่ง 1m; ตรวจยอดกับแท่งที่ปิดจริงในช่วง 95–105%, ไม่รับแถวผิดเหรียญ, และจำกัดการแบ่งหน้า 3 ครั้ง. ข้อมูลไม่พอแสดง `DATA_UNAVAILABLE` / `FLOW_UNAVAILABLE` ไม่ใช่ `WAIT` ที่ทำให้เข้าใจผิด
+- แสดง `FUTURES_FLOW_VERIFIED` เฉพาะเมื่อมีการตรวจข้อมูลฝั่งซื้อ/ขายเทียบแท่ง 1m แล้ว; เป็น **public Buy/Sell proxy** ไม่ใช่ข้อมูล Taker ที่กระดานรับรอง
+- Scalp เริ่มต้นเลือก PEPE ตามเหรียญหลักที่เลือกไว้ถ้าตรงคู่ที่รองรับ; ไม่เปลี่ยนตัวเลือกที่ผู้ใช้แก้เองในเซสชัน
+- `scalp_config.json`, กฎ Stop Loss/TP, ค่าความเสี่ยงต่อไม้/ต่อวัน, `paper_only`, Telegram/Workflow และ ID ของแผน Breakout เดิม **ไม่ได้เปลี่ยน**
+- Futures Binance Global ที่ HTTP 451/403 ยังคง `ACCESS_BLOCKED`; ไม่ผสมราคา Spot หรือสัญญาของอีกกระดานเพื่ออนุมัติ Futures READY
+
+**ข้อจำกัด:** ชุดทดสอบอัตโนมัติยืนยันการทำงานของกฎและการปฏิเสธข้อมูลไม่ครบเท่านั้น ไม่ได้ยืนยัน Win Rate หรือกำไรของกลยุทธ์ใหม่. ยังไม่มี Backtest/Walk-forward แบบครบต้นทุน/Order Book/Funding และยังไม่ได้ Deploy บนเว็บผู้ใช้. ดูวิธีอัปเดตเฉพาะไฟล์ใน `UPGRADE_v5.9.3_TH.md`.
+
 โปรแกรมวิเคราะห์สัญญาณคริปโตแบบอ่านข้อมูลอย่างเดียว ใช้เครื่องมือฟรี ไม่เชื่อมบัญชีซื้อขาย **ไม่ต้องใช้ API Key ของกระดานเทรด** และไม่มีคำสั่งส่งออเดอร์ (ระบบ Telegram ใช้ Bot Token ส่วนตัวใน GitHub Secrets)
 
 ## v5.0 Ultimate — สรุปส่วนที่เพิ่มจาก v4.3

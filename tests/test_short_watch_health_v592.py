@@ -116,7 +116,7 @@ class HealthTests(unittest.TestCase):
         futures = classify("BINANCE_GLOBAL_USDM", "PEPEUSDT",
                            snapshot=bearish("BINANCE_GLOBAL_USDM"), now=NOW)
         self.assertEqual(spot.state, "SPOT_ONLY")
-        self.assertEqual(bitget.state, "WATCH_ONLY")
+        self.assertEqual(bitget.state, "FLOW_UNAVAILABLE")
         self.assertEqual(futures.state, "FUTURES_DATA_READY")
         self.assertFalse(spot.can_approve_short)
         self.assertFalse(bitget.can_approve_short)

@@ -1,4 +1,4 @@
-"""v5.9.2 explicit exchange health, without mixing market data or orders."""
+"""v5.9.3 explicit exchange and reconciled-flow health, read-only."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -61,8 +61,17 @@ def classify(venue: str, symbol: str, *, error: str | None = None,
         return Health(venue, symbol, "SPOT_ONLY", "Spot ใช้ประเมิน LONG หรือขายเหรียญที่ถือ · "
                       "ไม่ใช่แหล่งอนุมัติ SHORT Futures", now)
     if venue == "BITGET_USDT_FUTURES":
-        return Health(venue, symbol, "WATCH_ONLY", "Futures Market Data ถึงแล้ว "
-                      "แต่ 1m directional Taker Flow ยังไม่ผ่านมาตรฐาน Zone READY", now)
+        one = snapshot.frames.get("1m")
+        verified = (bool(snapshot.flow_reconciled) and one is not None and
+                    "taker_buy" in one and bool(one.taker_buy.tail(4).notna().any()))
+        if not verified:
+            return Health(venue, symbol, "FLOW_UNAVAILABLE", "ราคา Futures พร้อม แต่ Public "
+                          "Buy/Sell Flow ของแท่ง 1m ยังตรวจเทียบปริมาณไม่ครบ · "
+                          "ไม่อาจอนุมัติ READY", now)
+        return Health(venue, symbol, "FUTURES_FLOW_VERIFIED", "Bitget Futures + Public Buy/Sell "
+                      "Volume Proxy ตรวจเทียบแท่ง 1m แล้ว (ไม่ใช่ Certified Taker Flow) "
+                      "· ยังต้องผ่านสัญญาณและข้อจำกัดความเสี่ยง", now,
+                      can_approve_short=True)
     return Health(venue, symbol, "FUTURES_DATA_READY", "ข้อมูล Futures ตลาดนี้มาครบ ณ รอบที่ตรวจ "
                   "· ยังต้องผ่านกฎกลยุทธ์และความเสี่ยงก่อน READY", now,
                   can_approve_short=True)

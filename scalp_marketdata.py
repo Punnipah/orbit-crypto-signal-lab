@@ -51,6 +51,10 @@ class MarketSnapshot:
     ask_depth_usdt: float
     instrument: Instrument
     checked_at: datetime
+    # True ONLY when the source adapter verified public-side trade quantities
+    # against complete closed candle volumes. Primarily for Bitget, whose
+    # candles do not carry native taker-buy volume.
+    flow_reconciled: bool = False
 
     @property
     def spread_bps(self) -> float:

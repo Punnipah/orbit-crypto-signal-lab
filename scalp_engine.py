@@ -159,6 +159,43 @@ def _setup_5m(frame: pd.DataFrame, side: str, settings: ScalpSettings,
     return None
 
 
+def _pullback_rejection_5m(frame: pd.DataFrame, side: str, settings: ScalpSettings,
+                           now: datetime) -> tuple[int, float, float] | None:
+    """Second entry archetype: a closed 5m rejection of a trend EMA retest.
+
+    Does not change any execution, fee, stop, 1m flow, or risk thresholds.
+    In particular a short cannot be inferred merely because price fell.
+    """
+    if len(frame) < 50:
+        return None
+    ema9 = _ema(frame.close, 9)
+    ema21 = _ema(frame.close, 21)
+    for pos in range(len(frame) - 1, max(30, len(frame) - 4), -1):
+        row = frame.iloc[pos]
+        closed_ms = int(row.open_ms) + 300_000
+        age_min = (now.timestamp() * 1000 - closed_ms) / 60_000
+        if not 0 <= age_min <= settings.setup_expiry_minutes:
+            continue
+        baseline_vol = float(frame.volume.iloc[pos-20:pos].mean())
+        if (not math.isfinite(baseline_vol) or baseline_vol <= 0 or
+                row.volume < baseline_vol * 1.10):
+            continue
+        prev_close = float(frame.close.iloc[pos - 1])
+        fast, slow = float(ema9.iloc[pos]), float(ema21.iloc[pos])
+        slow_prior = float(ema21.iloc[pos - 3])
+        if side == "SHORT" and (fast < slow and slow < slow_prior and
+                 float(row.high) >= fast and float(row.close) < fast and
+                 float(row.close) < min(float(row.open), prev_close) and
+                 float(row.high) <= slow * 1.015):
+            return int(row.open_ms), float(row.close), float(row.high)
+        if side == "LONG" and (fast > slow and slow > slow_prior and
+                 float(row.low) <= fast and float(row.close) > fast and
+                 float(row.close) > max(float(row.open), prev_close) and
+                 float(row.low) >= slow * .985):
+            return int(row.open_ms), float(row.close), float(row.low)
+    return None
+
+
 def _one_minute_confirmation(frame: pd.DataFrame, side: str, settings: ScalpSettings,
                              now: datetime, setup_open_ms: int) -> datetime | None:
     ema = _ema(frame.close, 9)
@@ -580,6 +617,10 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     fifteen = snapshot.frames["15m"]
     five = snapshot.frames["5m"]
     one = snapshot.frames["1m"]
+    if (snapshot.venue == "BITGET_USDT_FUTURES" and
+            (not snapshot.flow_reconciled or one.taker_buy.tail(4).isna().all())):
+        return status("DATA_UNAVAILABLE", "Bitget มีราคา Futures แต่ Public Buy/Sell Flow ของแท่ง 1m "
+                      "ที่ปิดแล้วยังตรวจเทียบ Volume ไม่ครบ · ยังประเมิน READY ไม่ได้")
     early_reversal_note = _early_spot_reversal_note(snapshot)
     atr = _atr(five)
     current = float(one.close.iloc[-1])
@@ -631,18 +672,26 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
             side == "SHORT" and float(five.close.iloc[-1]) > float(_ema(five.close, 21).iloc[-1])):
         return status("WAIT", "5m ไม่สอดคล้องกับ 15m", side=side)
     setup = _setup_5m(five, side, settings, now)
+    pullback = False
+    if setup is None and not microtrend:
+        setup = _pullback_rejection_5m(five, side, settings, now)
+        pullback = setup is not None
     if setup is None:
         return status("WAIT", "5m มีแนวโน้มระยะสั้น แต่ยังรอ Breakout ที่ปิดแท่งและ Volume ผ่าน"
-                      if microtrend else "รอ 5m Breakout จากกรอบเดิมที่ปิดแท่งและ Volume ผ่าน", side=side,
+                      if microtrend else "รอ 5m Breakout หรือ Pullback Rejection พร้อม Volume ของแท่งปิด", side=side,
                       strategy="MICRO_TREND" if microtrend else "TREND_BREAKOUT")
     opened_ms, breakout_close, breakout_extreme = setup
     setup_expires = datetime.fromtimestamp((opened_ms + 300_000) / 1000, timezone.utc) + timedelta(
         minutes=settings.setup_expiry_minutes)
-    setup_id = hashlib.sha256(f"{snapshot.venue}:{snapshot.symbol}:{side}:{opened_ms}".encode()).hexdigest()[:24]
+    strategy = "PULLBACK_REJECTION" if pullback else "MICRO_TREND" if microtrend else "TREND_BREAKOUT"
+    # Preserve existing breakout / microtrend IDs so a deployment does not
+    # accidentally re-alert already tracked v5.9.2 setups.
+    identity = (f"{snapshot.venue}:{snapshot.symbol}:PULLBACK:{side}:{opened_ms}"
+                if pullback else f"{snapshot.venue}:{snapshot.symbol}:{side}:{opened_ms}")
+    setup_id = hashlib.sha256(identity.encode()).hexdigest()[:24]
     confirmation = _one_minute_confirmation(one, side, settings, now, opened_ms)
     entry = snapshot.ask if side == "LONG" else snapshot.bid
-    # Bid/ask must still be within a small envelope around the confirmed 5m
-    # breakout. No "chase price" after a large move.
+    # Bid/ask must still be close to the closed setup. No chasing a large move.
     if abs(entry / breakout_close - 1) > min(0.006, max(0.002, atr / current * 0.65)):
         return status("RISK_BLOCK", "ราคาปัจจุบันไกลจากแท่ง Breakout มาก ไม่ไล่ราคา", side=side,
                       setup_id=setup_id)
@@ -710,9 +759,12 @@ def evaluate_scalp(snapshot: MarketSnapshot, settings: ScalpSettings,
     source_note = ("Public Fills Buy/Sell (ไม่ใช่ Taker ที่รับรอง)"
                    if snapshot.venue == "BITGET_USDT_FUTURES" else "Taker Flow")
     return status("READY" if confirmation else "WATCH",
-                  f"ผ่าน {'5m Momentum (15m neutral)' if microtrend else '15m/5m'} และแท่ง 1m {source_note} ยืนยัน; ตรวจราคาอีกครั้ง" if confirmation
-                  else f"พบกรอบ 5m; รอ 1m Volume + {source_note} ยืนยัน (ยังไม่ใช่จุดซื้อ)",
+                  f"ผ่าน {'5m Pullback Rejection' if pullback else '5m Momentum (15m neutral)' if microtrend else '15m/5m Breakout'} "
+                  f"และแท่ง 1m {source_note} ยืนยัน; ตรวจราคาอีกครั้ง" if confirmation
+                  else f"พบ {'5m Pullback Rejection' if pullback else 'กรอบ 5m'}; "
+                       f"รอ 1m Volume + {source_note} ยืนยัน (ยังไม่ใช่จุดเข้า)",
                   side=side, setup_id=setup_id, entry=entry, stop=stop, tp1=tp1, tp2=tp2,
                   qty=float(qty_dec), notional_usdt=notional,
                   risk_usdt=notional * (risk_fraction + full_cost), net_rr=net_rr,
-                  last_closed_1m=confirmation, expires_at=expires, setup_expires_at=setup_expires)
+                  last_closed_1m=confirmation, expires_at=expires, setup_expires_at=setup_expires,
+                  strategy=strategy)

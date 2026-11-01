@@ -228,11 +228,12 @@ class ScalpEngineTests(unittest.TestCase):
         snap = snapshot(venue="BITGET_USDT_FUTURES")
         snap.frames["1m"]["taker_buy"] = float("nan")
         ob = evaluate_scalp(snap, SETTINGS)
-        self.assertEqual(ob.state, "WATCH")
+        self.assertEqual(ob.state, "DATA_UNAVAILABLE")
 
     def test_bitget_complete_flow_can_be_ready_independently(self):
         snap = snapshot(venue="BITGET_USDT_FUTURES")
-        snap = replace(snap, instrument=replace(INSTRUMENT, taker_fee_pct=0.06))
+        snap = replace(snap, instrument=replace(INSTRUMENT, taker_fee_pct=0.06),
+                       flow_reconciled=True)
         ob = evaluate_scalp(snap, SETTINGS)
         self.assertEqual(ob.state, "READY")
         self.assertEqual(ob.venue, "BITGET_USDT_FUTURES")

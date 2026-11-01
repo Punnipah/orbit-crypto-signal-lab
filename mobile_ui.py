@@ -201,7 +201,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.9.2</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.9.3</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -469,7 +469,8 @@ def _data_health_panel(venue: str, symbol: str, *, snap=None, error: str | None 
         label = f"{health.state} · {health.detail}"
         if health.state in ("ACCESS_BLOCKED", "DATA_UNAVAILABLE", "STALE_DATA"):
             st.error(label)
-        elif health.state in ("RATE_LIMITED", "NETWORK_ERROR", "SYMBOL_UNAVAILABLE", "WATCH_ONLY"):
+        elif health.state in ("RATE_LIMITED", "NETWORK_ERROR", "SYMBOL_UNAVAILABLE",
+                              "WATCH_ONLY", "FLOW_UNAVAILABLE"):
             st.warning(label)
         else:
             st.info(label)
@@ -771,9 +772,9 @@ def scalp_screen() -> None:
 
     from scalp_fixed_tp import fixed_tp_preview, pepe_daily_ten_preview
 
-    st.markdown("## 🎯 Scalp Signal v5.9.2 · SHORT WATCH + DATA HEALTH + NEAR READY")
+    st.markdown("## 🎯 Scalp Signal v5.9.3 · PULLBACK + SHORT WATCH + DATA HEALTH")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
-               "Trend Breakout / Sideways / Early Reversal Watch · "
+               "Trend Breakout / Pullback Rejection / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
     market = st.radio("เลือกตลาด", ["Spot · Binance TH", "Futures · Binance Global",
                                    "Futures · Bitget (ตลาดแยก)"],
@@ -781,6 +782,9 @@ def scalp_screen() -> None:
     venue = ("BINANCE_TH_SPOT" if market.startswith("Spot") else
              "BITGET_USDT_FUTURES" if "Bitget" in market else "BINANCE_GLOBAL_USDM")
     pairs = ["BTCUSDT", "ETHUSDT", "PEPEUSDT", "DOGEUSDT"]
+    if "scalp_symbol" not in st.session_state:
+        preferred = st.session_state.get("orbit_mobile_pair", "PEPEUSDT")
+        st.session_state["scalp_symbol"] = preferred if preferred in pairs else "PEPEUSDT"
     symbol = st.selectbox("คู่เหรียญ USDT", pairs, key="scalp_symbol")
     tp_mode = st.selectbox(
         "รูปแบบ Take Profit", ["TP ตามแผนเดิม", "🎯 TP ระยะราคา 10 USDT",
@@ -829,12 +833,13 @@ def scalp_screen() -> None:
         _validation_panel(venue, symbol)
         return
     colors = {"READY": "good", "WATCH": "warning", "EXIT_WATCH": "warning",
-              "RISK_BLOCK": "danger"}
+              "RISK_BLOCK": "danger", "DATA_UNAVAILABLE": "danger"}
     color = colors.get(ob.state, "warning")
     heading = {"READY": "READY · พิจารณาได้เฉพาะช่วงเวลาสั้น ๆ",
                "WATCH": "WATCH · ยังไม่ใช่สัญญาณเข้า",
                "EXIT_WATCH": "SELL WATCH · Spot ขาลง",
                "RISK_BLOCK": "RISK BLOCK · งดเข้า",
+               "DATA_UNAVAILABLE": "DATA UNAVAILABLE · ข้อมูลยืนยันไม่ครบ",
                "WAIT": "WAIT · รอรูปแบบราคา"}.get(ob.state, ob.state)
     hero_reason = ob.reason
     if daily_ten and symbol == "PEPEUSDT" and daily_done:

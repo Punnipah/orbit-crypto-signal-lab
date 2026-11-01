@@ -26,10 +26,14 @@ from scalp_marketdata import (Instrument, MarketDataError, MarketSnapshot, PERIO
 BASE = "https://api.bitget.com"
 ROOT = "/api/v3/market/"
 CATEGORY = "USDT-FUTURES"
+HISTORY_ROUTE = "/api/v2/mix/market/fills-history"
 
 
 def _api(path: str, params: dict | None = None):
-    url = BASE + ROOT + path + ("?" + urlencode(params) if params else "")
+    if path.startswith("/") and path != HISTORY_ROUTE:
+        raise MarketDataError("Bitget history endpoint not allowed")
+    url = BASE + (path if path == HISTORY_ROUTE else ROOT + path) + (
+        "?" + urlencode(params) if params else "")
     req = Request(url, headers={"User-Agent": "OrbitScalpBitget/5.7 public read-only"})
     try:
         with urlopen(req, timeout=12) as res:
@@ -113,15 +117,17 @@ def parse_bitget_candles(rows: object, interval: str, now: datetime) -> pd.DataF
 def reconcile_recent_fills(frame: pd.DataFrame, raw: object, now: datetime) -> int:
     """Fill the buy-side public-trade proxy for fully reconciled 1m bars.
 
-    The public endpoint returns at most 100 latest trades. If they don't span
-    an entire bar or differ materially from exchange kline base volume, the
-    bar remains NaN. Zero-volume bars never qualify.
+    The v3 recent endpoint returns at most 100 trades; v2 public history
+    returns at most 1000 per page. Any incomplete / inconsistent candle
+    remains NaN. This is a public buy/sell proxy, never certified taker flow.
     """
-    if not isinstance(raw, list) or not raw or len(raw) > 100:
+    if not isinstance(raw, list) or not raw or len(raw) > 3000:
         raise MarketDataError("Bitget public fills missing/invalid")
     fills = []
+    seen = set()
     for row in raw:
-        if not isinstance(row, dict) or row.get("side") not in ("buy", "sell"):
+        side = str(row.get("side", "")).lower() if isinstance(row, dict) else ""
+        if side not in ("buy", "sell"):
             raise MarketDataError("Bitget fills missing side")
         try:
             timestamp = int(row["ts"])
@@ -130,7 +136,12 @@ def reconcile_recent_fills(frame: pd.DataFrame, raw: object, now: datetime) -> i
             raise MarketDataError("Bitget fills invalid timestamp/size") from None
         if not math.isfinite(size) or size <= 0:
             raise MarketDataError("Bitget fills invalid size")
-        fills.append((timestamp, size, row["side"]))
+        identity = row.get("tradeId") or row.get("execId")
+        if identity is not None:
+            if identity in seen:
+                continue  # Overlapping history pages are not extra volume.
+            seen.add(identity)
+        fills.append((timestamp, size, side))
     earliest, latest = min(x[0] for x in fills), max(x[0] for x in fills)
     if latest > int(now.timestamp() * 1000) + 60_000:
         raise MarketDataError("Bitget fill timestamp future-dated")
@@ -151,6 +162,42 @@ def reconcile_recent_fills(frame: pd.DataFrame, raw: object, now: datetime) -> i
         frame.iloc[idx, frame.columns.get_loc("taker_buy")] = min(vol, buy)
         complete += 1
     return complete
+
+
+def _history_fills(symbol: str, now: datetime, *, max_pages: int = 3) -> list[dict]:
+    """Read a bounded number of public-history pages; never private API.
+
+    The exchange may still have more than 3000 trades in a few minutes.
+    In that case reconciling fails closed instead of inventing the missing
+    directional flow. Stops when history spans the most recent closed bar.
+    """
+    now_ms = int(now.timestamp() * 1000)
+    params = {"symbol": symbol, "productType": CATEGORY, "limit": 1000,
+              "startTime": now_ms - 8 * 60_000, "endTime": now_ms}
+    results: list[dict] = []
+    previous_cursor = None
+    last_closed_open = (now_ms // 60_000 - 1) * 60_000
+    for _ in range(min(max_pages, 3)):
+        page = _api(HISTORY_ROUTE, params)
+        if not isinstance(page, list) or not page or len(page) > 1000:
+            raise MarketDataError("Bitget public history invalid/empty")
+        if not all(isinstance(row, dict) and row.get("symbol") == symbol
+                   and row.get("tradeId") is not None for row in page):
+            raise MarketDataError("Bitget history symbol or cursor invalid")
+        results.extend(page)
+        try:
+            oldest = min(page, key=lambda r: int(r["ts"]))
+            oldest_ms = int(oldest["ts"])
+        except (ValueError, TypeError, KeyError):
+            raise MarketDataError("Bitget history timestamp invalid") from None
+        if oldest_ms <= last_closed_open or len(page) < 1000:
+            break
+        cursor = page[-1]["tradeId"]
+        if cursor == previous_cursor:
+            raise MarketDataError("Bitget history pagination stalled")
+        previous_cursor = cursor
+        params["idLessThan"] = cursor
+    return results
 
 
 def fetch_bitget_snapshot(symbol: str, *, catalog: dict[str, Instrument] | None = None,
@@ -206,9 +253,20 @@ def fetch_bitget_snapshot(symbol: str, *, catalog: dict[str, Instrument] | None 
                                         "asks": raw_depth.get("a")})
     if abs(((bid + ask) / 2) / float(frames["1m"].close.iloc[-1]) - 1) > 0.035:
         raise MarketDataError("Bitget price differs from last 1m close")
-    fills = _api("fills", {**p, "limit": 100})
-    reconcile_recent_fills(frames["1m"], fills, now)
-    # Missing coverage is NOT a network failure: the engine can show WATCH,
-    # but a NaN 1m taker flow cannot pass either LONG/SHORT confirmation.
+    # On liquid PEPE, v3's 100 latest trades often do not span even one
+    # completed minute. Recover only via official public history and exact
+    # candle-volume reconciliation. Never guess buy/sell ratios.
+    try:
+        recent = _api("fills", {**p, "limit": 100})
+        reconcile_recent_fills(frames["1m"], recent, now)
+    except MarketDataError:
+        pass  # OHLC/quotes remain independently usable for research.
+    if frames["1m"].taker_buy.tail(4).isna().all():
+        try:
+            history = _history_fills(symbol, now)
+            reconcile_recent_fills(frames["1m"], history, now)
+        except MarketDataError:
+            pass  # Missing flow must never become a synthetic READY.
+    verified = bool(frames["1m"].taker_buy.tail(4).notna().any())
     return MarketSnapshot("BITGET_USDT_FUTURES", symbol, frames, bid, ask, bid_depth,
-                          ask_depth, instruments[symbol], now)
+                          ask_depth, instruments[symbol], now, flow_reconciled=verified)
