@@ -1,0 +1,23 @@
+name: Orbit Model Lab checks
+on:
+  push:
+    branches:
+      - experiment/orbit-model-lab
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install requirements
+        run: pip install -r requirements.txt
+      - name: Compile standalone app
+        run: python -m py_compile orbit_model_lab.py
+      - name: Verify Streamlit and Pandas imports
+        run: python -c "import streamlit, pandas, numpy; print('dependencies OK')"
