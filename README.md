@@ -1,4 +1,21 @@
-# Orbit Crypto Signal Lab v5.9.4 — Mobile App + Spot + Futures + Paper Tracker
+# Orbit Crypto Signal Lab v5.9.6 — Mobile App + Spot + Futures + Paper Tracker
+
+## ล่าสุด: v5.9.6 — Institutional-style Flow & Liquidity Radar (2 พ.ย. 2026)
+
+- เพิ่ม **Institutional-style Radar** ใต้ Model Radar ในหน้า Scalp 3 Playbooks อิสระ: `Liquidity Sweep → Reclaim` (wick แทงกรอบแล้วปิดกลับ), `Breakout → Retest` (ทะลุแล้วกลับมาทดสอบขอบกรอบ), `Rolling VWAP Reclaim` (ปิดข้าม VWAP ประมาณจากแท่งเทียน)
+- แสดงการสังเกตจากตลาดเดียวกัน: Taker Buy Share 3×1m, 5m Relative Volume, Bid Depth Share 20 ระดับ, Rolling VWAP 48×5m; **Depth จาก snapshot เดียวไม่ใช่ Order Flow Imbalance ที่ติดตาม L2 แบบ event-by-event และไม่ระบุตัวเจ้ามือได้**
+- ทุก Playbook แสดง `SETUP WATCH` (จำลองเท่านั้น), `NO SETUP`, `FLOW BLOCK`, `COST BLOCK`, `PRICE BLOCK`, `EXIT WATCH` (Spot ขาลงเท่านั้น) พร้อมเหตุผลและระดับอ้างอิง; **ไม่มี READY ใหม่**, ไม่มีสัญญาณ Telegram ใหม่, ไม่มีออร์เดอร์ และไม่เปลี่ยน `scalp_config.json`
+- แบบตรวจความถี่จากคลังแท่ง PEPE Binance TH ช่วง 29 ก.ย.–31 ต.ค. 2026: Sweep Buy มี 33 จุดที่ผ่านเงื่อนไขแท่ง+ปริมาณ และ 16 จุดหลังกรอง Buy Flow 1m/ยังยืนแนวรับ; Rolling VWAP Buy มี 46 จุดหลังกรองเช่นเดียวกัน **ก่อน** Spread, Depth, ต้นทุน, Risk และ Net R:R; **นี่ไม่ใช่ Backtest ผลตอบแทนหรือ Win Rate** และไม่เท่ากับสัญญาณเข้าได้จริง
+- แผนใหม่เป็นการปรับใช้แนวคิดสาธารณะของ Cont/Kukanov/Stoikov, Avellaneda/Stoikov, Almgren/Chriss ไม่ได้เลียนแบบโค้ดกรรมสิทธิ์หรืออ้างว่าเป็นสูตรลับของวาฬ; อ่าน `UPGRADE_v5.9.6_TH.md`
+
+## ล่าสุด: v5.9.5 — Model Radar & Signal Availability Audit (2 พ.ย. 2026)
+
+- เพิ่ม **Model Radar** ในหน้า Scalp: สแกนโมเดลอิสระ `BB20 Mean Reversion` และ `EMA9/21 Pullback` จากแท่ง 5m/15m ที่ปิดแล้ว บนตลาดจริงที่ผู้ใช้เลือกเท่านั้น
+- การ์ดแสดง `NO PATTERN`, `MODEL WATCH`, `COST BLOCK`, `FLOW BLOCK`, `DATA BLOCK` และเหตุผลที่ตรวจสอบได้ **ไม่มีสถานะ READY ใหม่และไม่เปลี่ยนสัญญาณเดิม**; `MODEL WATCH` เป็นงานวิจัย ไม่ใช่สัญญาณเข้า
+- ค่า Stop/Target ของโมเดลอ้างอิงกรอบ ATR/ความเสี่ยง 0.3–2.5% และคำนวณ Net R:R หลัง Fee/Slippage/Spread; บล็อกเมื่อไม่ผ่านเกณฑ์เดิม
+- โมเดลสร้างใหม่จากหลักการสาธารณะของ QuantConnect (Bollinger Mean Reversion), TradingView (BB Directed), Freqtrade (close-only / dry run); ไม่คัดลอกซอร์สโค้ดของผู้พัฒนาเหล่านั้น
+- **ประเด็นสำคัญที่ตรวจสดจากเว็บ 2 พ.ย. 2026:** หน้า Futures แสดง Binance USD-M `HTTP 451`, Bybit `HTTP 403`, Kraken Perpetual เป็น `WATCH ONLY` และไม่มี Taker Flow สำหรับ READY. ที่หน้า Scalp Binance TH Spot พบ PEPE `RISK BLOCK` Net R:R ≈0.47; Bitget มีบางส่วนของ Buy/Sell Flow ไม่พร้อม. เพิ่มโมเดลไม่แก้ปัญหา API/ตลาดที่เข้าถึงไม่ได้ และห้ามผสมข้อมูล Spot กับ Futures
+- ไม่เปลี่ยน `scalp_config.json`, `scalp_engine.py`, `futures_daytrade.py`, MTF, Telegram, workflows หรือการส่งคำสั่ง; ดูคู่มือ `UPGRADE_v5.9.5_TH.md`
 
 ## ล่าสุด: v5.9.4 — Spot Range Bounce Intelligence (1 พ.ย. 2026)
 

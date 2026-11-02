@@ -201,7 +201,7 @@ def top_navigation() -> str:
   <div class="orb-brand-left">
     <div class="orb-mark">◉</div>
     <div><div class="orb-name">ORBIT <em>LAB</em></div>
-         <div class="orb-version">ULTIMATE SIGNAL · V5.9.4</div></div>
+         <div class="orb-version">ULTIMATE SIGNAL · V5.9.6</div></div>
   </div>
   <div class="orb-live">● READ ONLY</div>
 </div>
@@ -826,7 +826,7 @@ def scalp_screen() -> None:
 
     from scalp_fixed_tp import fixed_tp_preview, pepe_daily_ten_preview
 
-    st.markdown("## 🎯 Scalp Signal v5.9.3 · PULLBACK + SHORT WATCH + DATA HEALTH")
+    st.markdown("## 🎯 Scalp Signal v5.9.6 · INSTITUTIONAL RADAR + MODEL RADAR")
     st.caption("อัปเดตเองทุก ~60 วินาทีขณะเปิดหน้าเว็บ · กดปุ่มเพื่อตรวจทันที · "
                "Trend Breakout / Pullback Rejection / Sideways / Early Reversal Watch · "
                "ใช้ข้อมูลตลาดสาธารณะ · PAPER ONLY · ไม่ส่งคำสั่งซื้อขาย")
@@ -905,6 +905,50 @@ def scalp_screen() -> None:
                 f'<div class="orb-hero-value">{escape(heading)}</div>'
                 f'<div class="orb-hero-note">{escape(hero_reason)}</div></div>',
                 unsafe_allow_html=True)
+    from model_radar import evaluate_reference_models
+    st.markdown("### 🧠 Model Radar · แนวคิดจาก QuantConnect / TradingView / Freqtrade")
+    st.caption("เทียบโมเดลอิสระจากแท่งปิดแล้ว · RESEARCH ONLY · ไม่เปลี่ยน READY/WAIT เดิม "
+               "และไม่ใช่คำสั่งซื้อ Futures")
+    for model in evaluate_reference_models(snap, cfg):
+        label = {"MODEL_WATCH": "🟡 MODEL WATCH", "COST_BLOCK": "🔴 COST BLOCK",
+                 "FLOW_BLOCK": "⚠️ FLOW BLOCK", "DATA_BLOCK": "⚠️ DATA BLOCK",
+                 "EXIT_WATCH": "🟠 EXIT WATCH", "NO_PATTERN": "⚪ NO PATTERN"}.get(model.state, model.state)
+        st.write(f"**{model.model}** · {label} · {model.side} — {model.reason}")
+        if model.state == "MODEL_WATCH":
+            st.caption(f"ระดับจำลองเท่านั้น: Entry {concise_price(model.entry)} · "
+                       f"SL {concise_price(model.stop)} · TP {concise_price(model.target)} · "
+                       f"Net R:R {model.net_rr:.2f}:1; ไม่ผ่าน Flow/Order Book และ READY เดิมโดยอัตโนมัติ")
+    from institutional_radar import evaluate_institutional_radar
+    research = evaluate_institutional_radar(snap, cfg)
+    st.markdown("### 🏦 Institutional-style Radar · Liquidity / Retest / VWAP")
+    st.caption("3 Playbooks จากข้อมูลจริงที่สังเกตได้ ไม่ใช่โมเดลลับของวาฬ · "
+               "SETUP WATCH เป็นเพียงแผนจำลอง ไม่เปิด READY และไม่ส่งคำสั่งซื้อ")
+    obs = research.evidence
+    if obs.rolling_vwap is not None:
+        flow_text = (f"{obs.recent_taker_buy_share:.0%}"
+                     if obs.recent_taker_buy_share is not None else "ไม่พร้อม")
+        st.caption(f"Rolling VWAP (48×5m): {concise_price(obs.rolling_vwap)} · "
+                   f"Volume 5m: {obs.five_min_volume_ratio:.2f}× · "
+                   f"Taker Buy 3×1m: {flow_text} · "
+                   f"Bid Depth Share 20 ชั้น: {obs.bid_depth_share:.0%}")
+    st.caption(obs.explanation)
+    for setup in research.playbooks:
+        status = {"SETUP_WATCH": "🟡 SETUP WATCH", "NO_SETUP": "⚪ NO SETUP",
+                  "EXIT_WATCH": "🟠 SPOT EXIT WATCH", "FLOW_BLOCK": "⚠️ FLOW BLOCK",
+                  "VOLUME_BLOCK": "⚠️ VOLUME BLOCK", "PRICE_BLOCK": "⚠️ PRICE BLOCK",
+                  "COST_BLOCK": "🔴 COST BLOCK", "DATA_BLOCK": "🔴 DATA BLOCK"}.get(
+                      setup.state, setup.state)
+        st.write(f"**{setup.name}** · {status} · {setup.side} — {setup.reason}")
+        if setup.reference_level is not None:
+            st.caption(f"ระดับโครงสร้างที่ใช้ตรวจ: {concise_price(setup.reference_level)}")
+        if setup.entry is not None and setup.net_rr is not None:
+            st.caption(f"แผนทฤษฎี: Entry {concise_price(setup.entry)} · "
+                       f"SL {concise_price(setup.stop)} · "
+                       f"TP {concise_price(setup.target)} · "
+                       f"Net R:R {setup.net_rr:.2f}:1 · PAPER RESEARCH ONLY")
+    if venue != "BINANCE_TH_SPOT" and not snap.flow_reconciled and venue == "BITGET_USDT_FUTURES":
+        st.warning("Bitget: Flow ยังตรวจไม่ครบแท่ง · โมเดลที่พบรูปแบบเป็นเพียงงานวิจัย "
+                   "ไม่เลื่อนเป็น SHORT/LONG READY")
     if (fixed_tp or daily_ten) and ob.state == "READY" and not daily_done:
         st.warning("READY ด้านบนเป็นสัญญาณตาม TP เดิมเท่านั้น · "
                    "TP ทางเลือกต้องผ่านค่าธรรมเนียมและ Net R:R แยก จึงจะใช้เป็นแผนได้")
