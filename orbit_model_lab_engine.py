@@ -293,11 +293,19 @@ def research_report(data: pd.DataFrame, settings: ResearchSettings,
         for period, tr in (("Train 70%", train), ("Holdout 30%", test)):
             metrics = summarize(tr)
             # A positive holdout with few trades is not proof of edge.
-            verdict = ("NEEDS DATA" if metrics["trades"] < 100 else
-                       "RESEARCH PASS · PAPER ONLY" if metrics["profit_factor"] is not None
-                       and metrics["profit_factor"] >= 1.2 and
-                       (metrics["mean_net_pct"] or 0) > 0 and
-                       metrics["drawdown_pct"] <= 10 else "RESEARCH FAIL")
+            if metrics["trades"] == 0:
+                verdict = "NO TRADES · NOT VALIDATED"
+            elif (metrics["mean_net_pct"] or 0) <= 0 or (
+                    metrics["profit_factor"] is not None and metrics["profit_factor"] < 1):
+                verdict = "NEGATIVE HOLDOUT · NO EDGE SHOWN"
+            elif metrics["trades"] < 100:
+                verdict = "LOW SAMPLE · PAPER ONLY"
+            elif (metrics["profit_factor"] is not None and
+                  metrics["profit_factor"] >= 1.2 and
+                  metrics["drawdown_pct"] <= 10):
+                verdict = "RESEARCH PASS · PAPER ONLY"
+            else:
+                verdict = "RESEARCH FAIL"
             out.append({"Model": name, "Window": period, "Trades": metrics["trades"],
                         "Win %": metrics["win_rate"], "Mean net/trade %": metrics["mean_net_pct"],
                         "Profit factor": metrics["profit_factor"],
