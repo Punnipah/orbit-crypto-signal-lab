@@ -56,7 +56,9 @@ def validate_candles(data: pd.DataFrame, *, now: datetime | None = None,
     """Reject gaps, duplicates, impossible OHLC, partial and stale bars."""
     if not {"open_ms", "open", "high", "low", "close", "volume"}.issubset(data.columns):
         raise DataUnavailable("OHLCV fields ไม่ครบ")
-    frame = data.copy()
+    # A validated frame has an index named open_ms, like its data column.
+    # Drop the row index before sorting to avoid pandas ambiguous-label errors.
+    frame = data.copy().reset_index(drop=True)
     for col in ("open_ms", "open", "high", "low", "close", "volume"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
     frame = frame.replace([np.inf, -np.inf], np.nan).dropna()
