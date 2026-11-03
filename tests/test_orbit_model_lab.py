@@ -78,6 +78,12 @@ class ModelLabTests(unittest.TestCase):
         self.assertTrue((report[report.Window == "Holdout 30%"]["Verdict"] !=
                          "TRAIN · NOT DECISION").all())
 
+    def test_negative_holdout_not_painted_as_just_missing_data(self):
+        report, _, _ = research_report(fixture(), ResearchSettings(), allow_short=False)
+        negative = report[(report.Window == "Holdout 30%") &
+                          (report["Mean net/trade %"] < 0)]
+        self.assertTrue((negative.Verdict == "NEGATIVE HOLDOUT · NO EDGE SHOWN").all())
+
     def test_public_binance_candles_pagination_without_replacing_venue(self):
         now_ms = 1_780_000_000_000 // 300_000 * 300_000
         now = datetime.fromtimestamp((now_ms + 10_000) / 1000, timezone.utc)
