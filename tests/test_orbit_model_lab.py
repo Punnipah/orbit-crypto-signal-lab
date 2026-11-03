@@ -36,6 +36,15 @@ class ModelLabTests(unittest.TestCase):
         with self.assertRaisesRegex(DataUnavailable, "ช่วงเวลาขาด"):
             validate_candles(broken)
 
+    def test_fetched_candles_can_be_revalidated_for_research(self):
+        # fetch_candles returns an indexed frame; the app validates it twice.
+        fetched = validate_candles(fixture())
+        again = validate_candles(fetched, require_fresh=False)
+        self.assertEqual(len(again), len(fetched))
+        report, _, features = research_report(fetched, ResearchSettings(), allow_short=False)
+        self.assertEqual(len(report), len(MODELS) * 2)
+        self.assertEqual(len(features), len(fetched))
+
     def test_reject_impossible_ohlc_and_stale(self):
         bad = fixture()
         bad.loc[20, "high"] = 0
