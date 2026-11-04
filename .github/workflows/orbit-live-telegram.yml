@@ -1,0 +1,58 @@
+name: Orbit Live Signal Telegram (Isolated)
+
+on:
+  schedule:
+    # Poll at 15-minute intervals, offset from busy :00 UTC. Actual GitHub
+    # schedule start times may be delayed; recent closed 5m bars are revisited.
+    - cron: "6,21,36,51 * * * *"
+  workflow_dispatch:
+    inputs:
+      send_test:
+        description: "Send Telegram connection test only (no market signal)"
+        type: boolean
+        required: false
+        default: false
+
+# Only the dedicated alert-state branch is written by the isolated notifier.
+permissions:
+  contents: write
+
+concurrency:
+  group: orbit-live-telegram-isolated
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - name: Checkout isolated Orbit Live Signal branch
+        uses: actions/checkout@v4
+        with:
+          ref: experiment/orbit-model-lab
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: monitor_requirements.txt
+
+      - name: Install lightweight indicator dependencies
+        run: python -m pip install -r monitor_requirements.txt
+
+      - name: Check Telegram Bot connection (manual test only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m orbit_live_telegram --test-telegram
+
+      - name: Scan closed candles and notify on new signals
+        if: ${{ github.event_name == 'schedule' || !inputs.send_test }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m orbit_live_telegram
