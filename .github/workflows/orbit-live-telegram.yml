@@ -1,6 +1,12 @@
 name: Orbit Live Signal Telegram (Isolated)
 
 on:
+  push:
+    # One safe connection check when this isolated workflow is installed or
+    # updated on main; normal alerts still run only on the schedule below.
+    branches: [main]
+    paths:
+      - .github/workflows/orbit-live-telegram.yml
   schedule:
     # Poll at 15-minute intervals, offset from busy :00 UTC. Actual GitHub
     # schedule start times may be delayed; recent closed 5m bars are revisited.
@@ -42,15 +48,15 @@ jobs:
       - name: Install lightweight indicator dependencies
         run: python -m pip install -r monitor_requirements.txt
 
-      - name: Check Telegram Bot connection (manual test only)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test }}
+      - name: Send initial or manually requested Telegram connection check
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.send_test) }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -m orbit_live_telegram --test-telegram
 
       - name: Scan closed candles and notify on new signals
-        if: ${{ github.event_name == 'schedule' || !inputs.send_test }}
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.send_test) }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
